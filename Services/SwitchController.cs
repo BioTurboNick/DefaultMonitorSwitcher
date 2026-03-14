@@ -294,16 +294,10 @@ public sealed class SwitchController : ISwitchController
 
     private void OnWindowMovedToHdtv(object? sender, EventArgs e)
     {
-        bool shouldSwitch;
-        lock (_lock)
-        {
-            shouldSwitch = _state == SwitcherState.DesktopIdle ||
-                           _state == SwitcherState.DesktopHdtvDwelling;
-        }
-
-        // Dragging a window to HDTV is an unambiguous user intent — switch immediately
-        if (shouldSwitch)
-            ForwardSwitchNow(SwitchReason.ExclusiveHdtvActivity);
+        // Per spec §5.8: a window move to HDTV does not directly trigger a forward
+        // switch — it signals likely intent and warrants faster sampling. Let the
+        // activity-dwell state machine (§5.7) make the actual switch decision.
+        _activity.ActivateElevatedPolling();
     }
 
     // ── Audio helper ──────────────────────────────────────────────────────────
