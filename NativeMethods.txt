@@ -1,0 +1,28 @@
+// Display config
+QueryDisplayConfig
+SetDisplayConfig
+DisplayConfigGetDeviceInfo
+DISPLAYCONFIG_PATH_INFO
+DISPLAYCONFIG_MODE_INFO
+DISPLAYCONFIG_TARGET_DEVICE_NAME
+DISPLAYCONFIG_MODE_INFO_TYPE
+
+// Monitor helpers
+GetMonitorInfo
+MONITORINFOEXW
+
+// Cursor / window
+GetCursorPos
+GetForegroundWindow
+MonitorFromPoint
+MonitorFromWindow
+
+// Window event hook
+SetWinEventHook
+UnhookWinEvent
+WINEVENTPROC
+
+// Window helpers
+GetAncestor
+IsWindowVisible
+GetWindowThreadProcessId
