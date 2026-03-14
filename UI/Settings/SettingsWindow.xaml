@@ -23,13 +23,13 @@
             <ComboBox   Grid.Row="0" Grid.Column="1"
                         ItemsSource="{Binding AvailableMonitors}"
                         SelectedItem="{Binding SelectedHdtvMonitor}"
-                        DisplayMemberPath="FriendlyName"/>
+                        DisplayMemberPath="DisplayLabel"/>
 
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Desktop primary:" VerticalAlignment="Center" Margin="0,6,0,0"/>
             <ComboBox   Grid.Row="1" Grid.Column="1" Margin="0,6,0,0"
                         ItemsSource="{Binding AvailableMonitors}"
                         SelectedItem="{Binding SelectedDesktopPrimaryMonitor}"
-                        DisplayMemberPath="FriendlyName"/>
+                        DisplayMemberPath="DisplayLabel"/>
         </Grid>
 
         <!-- ── Audio ───────────────────────────────────────────────────── -->
@@ -47,16 +47,14 @@
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Grid.Column="0" Text="HDTV audio:" VerticalAlignment="Center"/>
-            <ComboBox   Grid.Row="0" Grid.Column="1"
-                        ItemsSource="{Binding AvailableEndpoints}"
-                        SelectedItem="{Binding SelectedHdtvAudioEndpoint}"
-                        DisplayMemberPath="FriendlyName"/>
+            <TextBlock  Grid.Row="0" Grid.Column="1"
+                        Text="{Binding HdtvAudioLabel}"
+                        VerticalAlignment="Center" Foreground="Gray"/>
 
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Desktop audio:" VerticalAlignment="Center" Margin="0,6,0,0"/>
-            <ComboBox   Grid.Row="1" Grid.Column="1" Margin="0,6,0,0"
-                        ItemsSource="{Binding AvailableEndpoints}"
-                        SelectedItem="{Binding SelectedDesktopAudioEndpoint}"
-                        DisplayMemberPath="FriendlyName"/>
+            <TextBlock  Grid.Row="1" Grid.Column="1" Margin="0,6,0,0"
+                        Text="{Binding DesktopAudioLabel}"
+                        VerticalAlignment="Center" Foreground="Gray"/>
         </Grid>
 
         <!-- ── Timings ─────────────────────────────────────────────────── -->

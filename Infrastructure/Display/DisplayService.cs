@@ -38,6 +38,7 @@ public sealed class DisplayService : IDisplayService
             });
         }
 
+        AssignPositionLabels(results);
         return results;
     }
 
@@ -127,6 +128,28 @@ public sealed class DisplayService : IDisplayService
 
         failureReason = null;
         return true;
+    }
+
+    // ── Position labels ──────────────────────────────────────────────────────
+
+    private static void AssignPositionLabels(List<MonitorInfo> monitors)
+    {
+        var sorted = monitors.OrderBy(m => m.Bounds.X).ToList();
+        string[] names = sorted.Count switch
+        {
+            1 => [""],
+            2 => ["Left", "Right"],
+            3 => ["Left", "Center", "Right"],
+            _ => sorted.Select((_, i) => $"#{i + 1}").ToArray(),
+        };
+
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            var m = sorted[i];
+            var label = names[i].Length > 0 ? $"{names[i]} \u2014 {m.FriendlyName}" : m.FriendlyName;
+            var idx = monitors.IndexOf(m);
+            monitors[idx] = m with { DisplayLabel = label };
+        }
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

@@ -15,8 +15,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     // ── Collections ───────────────────────────────────────────────────────────
 
-    public ObservableCollection<MonitorInfo>       AvailableMonitors  { get; } = new();
-    public ObservableCollection<AudioEndpointInfo> AvailableEndpoints { get; } = new();
+    public ObservableCollection<MonitorInfo> AvailableMonitors { get; } = new();
 
     // ── Display ───────────────────────────────────────────────────────────────
 
@@ -25,8 +24,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     // ── Audio ─────────────────────────────────────────────────────────────────
 
-    [ObservableProperty] private AudioEndpointInfo? _selectedHdtvAudioEndpoint;
-    [ObservableProperty] private AudioEndpointInfo? _selectedDesktopAudioEndpoint;
+    [ObservableProperty] private string _hdtvAudioLabel    = "Not detected";
+    [ObservableProperty] private string _desktopAudioLabel = "Not detected";
     [ObservableProperty] private bool _audioSwitchingEnabled;
     [ObservableProperty] private bool _respectManualAudioOverride;
 
@@ -67,6 +66,23 @@ public sealed partial class SettingsViewModel : ObservableObject
         Load();
     }
 
+    partial void OnSelectedHdtvMonitorChanged(MonitorInfo? value)
+    {
+        if (SelectedDesktopPrimaryMonitor == value || SelectedDesktopPrimaryMonitor == null)
+            SelectedDesktopPrimaryMonitor = AvailableMonitors.FirstOrDefault(m => m != value);
+
+        HdtvAudioLabel = value != null
+            ? (_audio.AutoDetectEndpointForMonitor(value)?.FriendlyName ?? "Not detected")
+            : "Not detected";
+    }
+
+    partial void OnSelectedDesktopPrimaryMonitorChanged(MonitorInfo? value)
+    {
+        DesktopAudioLabel = value != null
+            ? (_audio.AutoDetectEndpointForMonitor(value)?.FriendlyName ?? "Not detected")
+            : "Not detected";
+    }
+
     // ── Commands ──────────────────────────────────────────────────────────────
 
     [RelayCommand]
@@ -79,8 +95,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         {
             HdtvDisplayDevicePath              = SelectedHdtvMonitor?.DevicePath,
             PreferredPrimaryDisplayDevicePath  = SelectedDesktopPrimaryMonitor?.DevicePath,
-            HdtvAudioDeviceId                  = SelectedHdtvAudioEndpoint?.DeviceId,
-            DesktopAudioDeviceId               = SelectedDesktopAudioEndpoint?.DeviceId,
+            HdtvAudioDeviceId                  = SelectedHdtvMonitor != null
+                                                     ? _audio.AutoDetectEndpointForMonitor(SelectedHdtvMonitor)?.DeviceId
+                                                     : null,
+            DesktopAudioDeviceId               = SelectedDesktopPrimaryMonitor != null
+                                                     ? _audio.AutoDetectEndpointForMonitor(SelectedDesktopPrimaryMonitor)?.DeviceId
+                                                     : null,
             AudioSwitchingEnabled              = AudioSwitchingEnabled,
             RespectManualAudioOverride         = RespectManualAudioOverride,
             IdleTimeoutSeconds                 = IdleTimeoutSeconds,
@@ -116,19 +136,21 @@ public sealed partial class SettingsViewModel : ObservableObject
         foreach (var m in _display.GetActiveMonitors())
             AvailableMonitors.Add(m);
 
-        AvailableEndpoints.Clear();
-        foreach (var e in _audio.GetPlaybackEndpoints())
-            AvailableEndpoints.Add(e);
-
         SelectedHdtvMonitor = AvailableMonitors
             .FirstOrDefault(m => m.DevicePath == cfg.HdtvDisplayDevicePath);
-        SelectedDesktopPrimaryMonitor = AvailableMonitors
-            .FirstOrDefault(m => m.DevicePath == cfg.PreferredPrimaryDisplayDevicePath);
 
-        SelectedHdtvAudioEndpoint = AvailableEndpoints
-            .FirstOrDefault(e => e.DeviceId == cfg.HdtvAudioDeviceId);
-        SelectedDesktopAudioEndpoint = AvailableEndpoints
-            .FirstOrDefault(e => e.DeviceId == cfg.DesktopAudioDeviceId);
+        SelectedDesktopPrimaryMonitor = AvailableMonitors
+            .FirstOrDefault(m => m.DevicePath == cfg.PreferredPrimaryDisplayDevicePath)
+            ?? AvailableMonitors.FirstOrDefault(m => m != SelectedHdtvMonitor);
+
+        // Labels are set by the OnSelected*Changed handlers above; set them here too
+        // for the case where the selections didn't change (same value re-assigned).
+        HdtvAudioLabel = SelectedHdtvMonitor != null
+            ? (_audio.AutoDetectEndpointForMonitor(SelectedHdtvMonitor)?.FriendlyName ?? "Not detected")
+            : "Not detected";
+        DesktopAudioLabel = SelectedDesktopPrimaryMonitor != null
+            ? (_audio.AutoDetectEndpointForMonitor(SelectedDesktopPrimaryMonitor)?.FriendlyName ?? "Not detected")
+            : "Not detected";
 
         AudioSwitchingEnabled        = cfg.AudioSwitchingEnabled;
         RespectManualAudioOverride   = cfg.RespectManualAudioOverride;

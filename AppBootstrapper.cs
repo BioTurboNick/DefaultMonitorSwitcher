@@ -37,32 +37,22 @@ public sealed class AppBootstrapper : IDisposable
             menu.Opened += FixContextMenuDpiPlacement;
         }
 
-        // Load icon from embedded WPF resource; fall back to system default
-        var log = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "DefaultMonitorSwitcher", "startup.log");
-        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(log)!);
-        var sb = new System.Text.StringBuilder();
+        // Load icon from embedded WPF resource; fall back to system default.
+        // Icon must be set before making the tray icon visible.
         try
         {
             var iconUri    = new Uri("pack://application:,,,/UI/Resources/Icons/app.ico");
             var iconStream = System.Windows.Application.GetResourceStream(iconUri)?.Stream;
-            sb.AppendLine($"[icon] stream={iconStream?.Length.ToString() ?? "null"}");
             _trayIcon.Icon = iconStream != null
                 ? new System.Drawing.Icon(iconStream)
                 : System.Drawing.SystemIcons.Application;
-            sb.AppendLine($"[icon] set ok {_trayIcon.Icon.Width}px");
         }
-        catch (Exception ex)
+        catch
         {
-            sb.AppendLine($"[icon] FAILED: {ex}");
             _trayIcon.Icon = System.Drawing.SystemIcons.Application;
         }
 
-        // Icon must be set before making the tray icon visible
         _trayIcon.Visibility = System.Windows.Visibility.Visible;
-        sb.AppendLine("[tray] Visibility=Visible");
-        System.IO.File.WriteAllText(log, sb.ToString());
 
         // ── Attach notifications to tray ──────────────────────────────────
         var notif = (NotificationService)_services.GetRequiredService<INotificationService>();

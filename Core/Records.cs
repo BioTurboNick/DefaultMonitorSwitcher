@@ -6,6 +6,8 @@ public sealed record MonitorInfo
     public required string FriendlyName { get; init; }
     public required System.Drawing.Rectangle Bounds { get; init; }
     public bool IsPrimary { get; init; }
+    /// <summary>Position-qualified label, e.g. "Left — Samsung…". Set by DisplayService.</summary>
+    public string DisplayLabel { get; init; } = "";
 }
 
 public sealed record AudioEndpointInfo
