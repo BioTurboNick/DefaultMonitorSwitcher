@@ -139,6 +139,8 @@ public sealed class SwitchController : ISwitchController
         if (cfg.PreferredPrimaryDisplayDevicePath == null)
             return SwitchResult.DisplayNotFound;
 
+        var activeMonitors = _display.GetActiveMonitors();
+
         // No-op if the desktop monitor is already primary
         string? primary = _display.GetPrimaryMonitorDevicePath();
         if (primary != null && primary.Equals(
@@ -148,7 +150,15 @@ public sealed class SwitchController : ISwitchController
             return SwitchResult.NoActionNeeded;
         }
 
-        bool ok = _display.TrySetPrimaryMonitor(cfg.PreferredPrimaryDisplayDevicePath, out string? displayErr);
+        // §6.1: preferred monitor may be unavailable — fall back to any other desktop monitor
+        string? targetPath = ResolveDesktopDisplayPath(cfg, activeMonitors);
+        if (targetPath == null)
+        {
+            _notifications.ShowWarning("Cannot revert: no desktop monitor is connected.");
+            return SwitchResult.DisplayNotFound;
+        }
+
+        bool ok = _display.TrySetPrimaryMonitor(targetPath, out string? displayErr);
         if (!ok)
         {
             var r = SwitchResult.Failed;
@@ -158,7 +168,7 @@ public sealed class SwitchController : ISwitchController
             return r;
         }
 
-        var audioResult = SwitchAudio(ResolveDesktopAudioId(cfg), cfg);
+        var audioResult = SwitchAudio(ResolveDesktopAudioId(cfg, targetPath, activeMonitors), cfg);
 
         SetState(SwitcherState.DesktopIdle);
         _notifications.ShowSwitchNotification(SwitchDirection.Revert, reason, audioResult);
@@ -327,36 +337,64 @@ public sealed class SwitchController : ISwitchController
         return SwitchResult.AudioFailed;
     }
 
-    private string? ResolveDesktopAudioId(AppConfiguration cfg)
+    /// <summary>
+    /// §6.1: Returns the preferred primary display path if it is currently active,
+    /// otherwise the first active non-HDTV monitor, otherwise null.
+    /// </summary>
+    private static string? ResolveDesktopDisplayPath(AppConfiguration cfg, IReadOnlyList<MonitorInfo> monitors)
     {
-        if (cfg.DesktopAudioDeviceId != null)
+        if (cfg.PreferredPrimaryDisplayDevicePath != null &&
+            monitors.Any(m => m.DevicePath.Equals(
+                cfg.PreferredPrimaryDisplayDevicePath, StringComparison.OrdinalIgnoreCase)))
+            return cfg.PreferredPrimaryDisplayDevicePath;
+
+        // Fallback: any active monitor that is not the HDTV
+        return monitors.FirstOrDefault(m =>
+            !m.DevicePath.Equals(cfg.HdtvDisplayDevicePath, StringComparison.OrdinalIgnoreCase))
+            ?.DevicePath;
+    }
+
+    /// <summary>
+    /// §5.4: Resolves the desktop audio device ID for the given target display path.
+    /// Uses stored config when targeting the preferred monitor; auto-detects otherwise.
+    /// If detection fails, falls back to any other non-HDTV monitor's endpoint.
+    /// </summary>
+    private string? ResolveDesktopAudioId(AppConfiguration cfg, string targetPath, IReadOnlyList<MonitorInfo> monitors)
+    {
+        bool isPreferred = targetPath.Equals(
+            cfg.PreferredPrimaryDisplayDevicePath, StringComparison.OrdinalIgnoreCase);
+
+        if (isPreferred && cfg.DesktopAudioDeviceId != null)
             return cfg.DesktopAudioDeviceId;
 
-        if (cfg.PreferredPrimaryDisplayDevicePath == null)
-            return null;
+        var target = monitors.FirstOrDefault(m => m.DevicePath.Equals(
+            targetPath, StringComparison.OrdinalIgnoreCase));
+        if (target != null)
+        {
+            var ep = _audio.AutoDetectEndpointForMonitor(target);
+            if (ep != null) return ep.DeviceId;
+        }
 
-        var desktop = _display.GetActiveMonitors()
-            .FirstOrDefault(m => m.DevicePath.Equals(
-                cfg.PreferredPrimaryDisplayDevicePath, StringComparison.OrdinalIgnoreCase));
+        // §5.4 fallback: try any other non-HDTV, non-target monitor
+        var fallback = monitors.FirstOrDefault(m =>
+            !m.DevicePath.Equals(cfg.HdtvDisplayDevicePath, StringComparison.OrdinalIgnoreCase) &&
+            !m.DevicePath.Equals(targetPath, StringComparison.OrdinalIgnoreCase));
 
-        return desktop != null ? _audio.AutoDetectEndpointForMonitor(desktop)?.DeviceId : null;
+        return fallback != null ? _audio.AutoDetectEndpointForMonitor(fallback)?.DeviceId : null;
     }
 
     // ── Misc helpers ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// When elevated polling is active the HDTV dwell threshold scales down by the
-    /// same ratio as the poll interval, so the forward switch fires proportionally sooner.
-    /// e.g. defaults: 60s × (1s / 5s) = 12s during elevated polling.
+    /// Returns the HDTV dwell threshold appropriate for the current polling state.
+    /// During elevated polling (triggered by window drag), uses the shorter
+    /// ElevatedHdtvDwellSeconds so the forward switch fires sooner regardless of
+    /// how the poll intervals are configured.
     /// </summary>
-    private double HdtvDwellThreshold(AppConfiguration cfg)
-    {
-        if (!_activity.IsElevatedPollingActive || cfg.PollIntervalSeconds <= 0)
-            return cfg.HdtvDwellSeconds;
-
-        double ratio = (double)cfg.ElevatedPollIntervalSeconds / cfg.PollIntervalSeconds;
-        return cfg.HdtvDwellSeconds * ratio;
-    }
+    private double HdtvDwellThreshold(AppConfiguration cfg) =>
+        _activity.IsElevatedPollingActive
+            ? cfg.ElevatedHdtvDwellSeconds
+            : cfg.HdtvDwellSeconds;
 
     private void SetState(SwitcherState s)
     {

@@ -37,6 +37,8 @@ public sealed record AppConfiguration
     public int    IdleTimeoutSeconds               { get; init; } = 300;
     public int    DesktopDwellSeconds              { get; init; } = 120;
     public int    HdtvDwellSeconds                 { get; init; } = 60;
+    /// <summary>HDTV dwell threshold used when elevated polling is active (window-drag detected).</summary>
+    public int    ElevatedHdtvDwellSeconds         { get; init; } = 12;
     public int    MouseDwellSeconds                { get; init; } = 10;
     public int    PollIntervalSeconds              { get; init; } = 5;
     public int    ElevatedPollIntervalSeconds      { get; init; } = 1;

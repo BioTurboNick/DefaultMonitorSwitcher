@@ -34,6 +34,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _idleTimeoutSeconds;
     [ObservableProperty] private int _desktopDwellSeconds;
     [ObservableProperty] private int _hdtvDwellSeconds;
+    [ObservableProperty] private int _elevatedHdtvDwellSeconds;
     [ObservableProperty] private int _mouseDwellSeconds;
     [ObservableProperty] private int _pollIntervalSeconds;
     [ObservableProperty] private int _elevatedPollIntervalSeconds;
@@ -106,6 +107,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             IdleTimeoutSeconds                 = IdleTimeoutSeconds,
             DesktopDwellSeconds                = DesktopDwellSeconds,
             HdtvDwellSeconds                   = HdtvDwellSeconds,
+            ElevatedHdtvDwellSeconds           = ElevatedHdtvDwellSeconds,
             MouseDwellSeconds                  = MouseDwellSeconds,
             PollIntervalSeconds                = PollIntervalSeconds,
             ElevatedPollIntervalSeconds        = ElevatedPollIntervalSeconds,
@@ -157,6 +159,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         IdleTimeoutSeconds           = cfg.IdleTimeoutSeconds;
         DesktopDwellSeconds          = cfg.DesktopDwellSeconds;
         HdtvDwellSeconds             = cfg.HdtvDwellSeconds;
+        ElevatedHdtvDwellSeconds     = cfg.ElevatedHdtvDwellSeconds;
         MouseDwellSeconds            = cfg.MouseDwellSeconds;
         PollIntervalSeconds          = cfg.PollIntervalSeconds;
         ElevatedPollIntervalSeconds  = cfg.ElevatedPollIntervalSeconds;

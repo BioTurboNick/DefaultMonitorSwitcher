@@ -241,8 +241,12 @@ responsive detection is warranted.
   false-positive switch can occur without the 5.7 condition also being satisfied.
 - **Expiry**: When the elevated duration elapses without a forward switch firing,
   polling silently returns to the normal interval.
-- **Scope**: Elevated polling only affects the forward-switch dwell check (5.7).
-  The revert polling interval is unaffected.
+- **Scope**: Elevated polling affects the forward-switch dwell check (5.7) in two
+  ways: the poll interval is reduced *and* the HDTV dwell threshold is replaced
+  by the shorter **elevated HDTV dwell threshold** (`elevatedHdtvDwellSeconds`,
+  default 12 seconds). This means a forward switch can fire after only 12 seconds
+  of exclusive HDTV activity following a window drag, rather than the full 60-second
+  default. The revert polling interval and thresholds are unaffected.
 
 ---
 
@@ -293,7 +297,8 @@ application's data directory.
 | `desktopDwellSeconds` | int | 120 | Seconds of exclusive desktop activity before early revert triggers |
 | `mouseDwellSeconds` | int | 10 | Seconds cursor must remain on a monitor before it is counted as a mouse activity signal |
 | `pollIntervalSeconds` | int | 5 | How often activity signals are sampled |
-| `hdtvDwellSeconds` | int | 60 | Seconds of exclusive HDTV activity before forward switch triggers |
+| `hdtvDwellSeconds` | int | 60 | Seconds of exclusive HDTV activity before forward switch triggers (normal polling) |
+| `elevatedHdtvDwellSeconds` | int | 12 | Seconds of exclusive HDTV activity before forward switch triggers when elevated polling is active (see §5.8) |
 | `elevatedPollIntervalSeconds` | int | 1 | Poll interval (seconds) during the elevated window after a window-move event to the HDTV |
 | `elevatedPollDurationSeconds` | int | 30 | How long elevated polling remains active after the last window-move event to the HDTV |
 | `tvShowModeEnabled` | bool | false | Suppresses automatic reverts (5.1 and 5.2) when true |

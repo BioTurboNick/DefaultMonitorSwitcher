@@ -73,6 +73,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <TextBlock Grid.Row="0" Grid.Column="0" Text="Idle timeout (HDTV → countdown):" VerticalAlignment="Center"/>
@@ -84,17 +85,20 @@
             <TextBlock Grid.Row="2" Grid.Column="0" Text="HDTV switch dwell:" VerticalAlignment="Center"/>
             <TextBox   Grid.Row="2" Grid.Column="1" Text="{Binding HdtvDwellSeconds}" Margin="0,2,0,2"/>
 
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="Mouse dwell:" VerticalAlignment="Center"/>
-            <TextBox   Grid.Row="3" Grid.Column="1" Text="{Binding MouseDwellSeconds}" Margin="0,2,0,2"/>
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="HDTV switch dwell (elevated):" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="3" Grid.Column="1" Text="{Binding ElevatedHdtvDwellSeconds}" Margin="0,2,0,2"/>
 
-            <TextBlock Grid.Row="4" Grid.Column="0" Text="Poll interval:" VerticalAlignment="Center"/>
-            <TextBox   Grid.Row="4" Grid.Column="1" Text="{Binding PollIntervalSeconds}" Margin="0,2,0,2"/>
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Mouse dwell:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="4" Grid.Column="1" Text="{Binding MouseDwellSeconds}" Margin="0,2,0,2"/>
 
-            <TextBlock Grid.Row="5" Grid.Column="0" Text="Elevated poll interval:" VerticalAlignment="Center"/>
-            <TextBox   Grid.Row="5" Grid.Column="1" Text="{Binding ElevatedPollIntervalSeconds}" Margin="0,2,0,2"/>
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Poll interval:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="5" Grid.Column="1" Text="{Binding PollIntervalSeconds}" Margin="0,2,0,2"/>
 
-            <TextBlock Grid.Row="6" Grid.Column="0" Text="Elevated poll duration:" VerticalAlignment="Center"/>
-            <TextBox   Grid.Row="6" Grid.Column="1" Text="{Binding ElevatedPollDurationSeconds}" Margin="0,2,0,2"/>
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="Elevated poll interval:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="6" Grid.Column="1" Text="{Binding ElevatedPollIntervalSeconds}" Margin="0,2,0,2"/>
+
+            <TextBlock Grid.Row="7" Grid.Column="0" Text="Elevated poll duration:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="7" Grid.Column="1" Text="{Binding ElevatedPollDurationSeconds}" Margin="0,2,0,2"/>
         </Grid>
 
         <!-- ── General ─────────────────────────────────────────────────── -->
