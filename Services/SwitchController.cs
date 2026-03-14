@@ -199,7 +199,7 @@ public sealed class SwitchController : ISwitchController
                     {
                         toState = SwitcherState.DesktopIdle;
                     }
-                    else if ((now - _dwellStart).TotalSeconds >= cfg.HdtvDwellSeconds)
+                    else if ((now - _dwellStart).TotalSeconds >= HdtvDwellThreshold(cfg))
                     {
                         switchDir    = SwitchDirection.Forward;
                         switchReason = SwitchReason.ExclusiveHdtvActivity;
@@ -343,6 +343,20 @@ public sealed class SwitchController : ISwitchController
     }
 
     // ── Misc helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// When elevated polling is active the HDTV dwell threshold scales down by the
+    /// same ratio as the poll interval, so the forward switch fires proportionally sooner.
+    /// e.g. defaults: 60s × (1s / 5s) = 12s during elevated polling.
+    /// </summary>
+    private double HdtvDwellThreshold(AppConfiguration cfg)
+    {
+        if (!_activity.IsElevatedPollingActive || cfg.PollIntervalSeconds <= 0)
+            return cfg.HdtvDwellSeconds;
+
+        double ratio = (double)cfg.ElevatedPollIntervalSeconds / cfg.PollIntervalSeconds;
+        return cfg.HdtvDwellSeconds * ratio;
+    }
 
     private void SetState(SwitcherState s)
     {

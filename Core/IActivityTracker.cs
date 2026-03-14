@@ -11,6 +11,9 @@ public interface IActivityTracker : IDisposable
     /// </summary>
     void ActivateElevatedPolling();
 
+    /// <summary>True while the elevated poll interval is in effect.</summary>
+    bool IsElevatedPollingActive { get; }
+
     void Start();
     void Stop();
 }

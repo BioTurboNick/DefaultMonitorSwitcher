@@ -30,6 +30,11 @@ public sealed class ActivityTracker : IActivityTracker
 
     public event EventHandler<ActivitySample>? SampleProduced;
 
+    public bool IsElevatedPollingActive
+    {
+        get { lock (_elevatedLock) return _elevatedExpiry.HasValue && DateTimeOffset.UtcNow < _elevatedExpiry.Value; }
+    }
+
     public void ActivateElevatedPolling()
     {
         lock (_elevatedLock)
