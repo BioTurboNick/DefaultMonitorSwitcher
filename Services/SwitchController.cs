@@ -75,8 +75,9 @@ public sealed class SwitchController : ISwitchController
         var cfg = _config.Current;
 
         // Wire events before starting the tracker
-        _activity.SampleProduced += OnSampleProduced;
+        _activity.SampleProduced        += OnSampleProduced;
         _windowEvents.WindowMovedToHdtv += OnWindowMovedToHdtv;
+        _config.ConfigurationChanged    += OnConfigurationChanged;
 
         // Start window hook if HDTV monitor is configured
         if (cfg.HdtvDisplayDevicePath != null)
@@ -271,6 +272,24 @@ public sealed class SwitchController : ISwitchController
         }
     }
 
+    // ── Configuration change ──────────────────────────────────────────────────
+
+    private void OnConfigurationChanged(object? sender, AppConfiguration cfg)
+    {
+        // Restart the WinEvent hook whenever the designated HDTV monitor changes
+        // so window-drag detection tracks the correct monitor immediately.
+        _windowEvents.Stop();
+
+        if (cfg.HdtvDisplayDevicePath != null)
+        {
+            var hdtv = _display.GetActiveMonitors()
+                .FirstOrDefault(m => m.DevicePath.Equals(
+                    cfg.HdtvDisplayDevicePath, StringComparison.OrdinalIgnoreCase));
+            if (hdtv != null)
+                _windowEvents.Start(hdtv);
+        }
+    }
+
     // ── Window-drag event (UI thread) ─────────────────────────────────────────
 
     private void OnWindowMovedToHdtv(object? sender, EventArgs e)
@@ -348,8 +367,9 @@ public sealed class SwitchController : ISwitchController
 
     public void Dispose()
     {
-        _activity.SampleProduced     -= OnSampleProduced;
+        _activity.SampleProduced        -= OnSampleProduced;
         _windowEvents.WindowMovedToHdtv -= OnWindowMovedToHdtv;
+        _config.ConfigurationChanged    -= OnConfigurationChanged;
         _activity.Stop();
         _windowEvents.Stop();
     }
