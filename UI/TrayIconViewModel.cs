@@ -7,8 +7,7 @@ namespace DefaultMonitorSwitcher.UI;
 
 public sealed partial class TrayIconViewModel : ObservableObject, IDisposable
 {
-    private readonly ISwitchController    _controller;
-    private readonly IConfigurationService _config;
+    private readonly ISwitchController      _controller;
     private readonly Func<SettingsViewModel> _settingsVmFactory;
 
     [ObservableProperty] private TrayIconState _iconState   = TrayIconState.Neutral;
@@ -17,12 +16,11 @@ public sealed partial class TrayIconViewModel : ObservableObject, IDisposable
     [ObservableProperty] private bool _isHdtvPrimary;
 
     public TrayIconViewModel(
-        ISwitchController     controller,
-        IConfigurationService config,
+        ISwitchController       controller,
+        IConfigurationService   _,
         Func<SettingsViewModel> settingsVmFactory)
     {
         _controller        = controller;
-        _config            = config;
         _settingsVmFactory = settingsVmFactory;
 
         _tvShowModeEnabled = controller.TvShowModeEnabled;
@@ -65,6 +63,9 @@ public sealed partial class TrayIconViewModel : ObservableObject, IDisposable
     private void OnSwitchCompleted(
         object? sender,
         (SwitchDirection Direction, SwitchReason Reason, SwitchResult Result) _) { }
+
+    partial void OnIsHdtvPrimaryChanged(bool value) =>
+        RevertNowCommand.NotifyCanExecuteChanged();
 
     partial void OnTvShowModeEnabledChanged(bool value) =>
         UpdateFromState(_controller.CurrentState);
