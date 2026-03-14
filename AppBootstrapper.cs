@@ -1,3 +1,4 @@
+using DefaultMonitorSwitcher.Core;
 using DefaultMonitorSwitcher.Infrastructure.Display;
 using DefaultMonitorSwitcher.Services;
 
@@ -5,48 +6,34 @@ namespace DefaultMonitorSwitcher;
 
 public sealed class AppBootstrapper : IDisposable
 {
-    private readonly DisplayService _displayService = new();
+    private readonly DisplayService     _displayService = new();
+    private readonly ConfigurationService _configService = new();
+    private ActivityTracker?            _tracker;
 
     public void Start()
     {
-        // Stage 2 debug: enumerate monitors and print to debug output / console
-        var monitors = _displayService.GetActiveMonitors();
-
-        System.Diagnostics.Debug.WriteLine("=== Active Monitors ===");
-        foreach (var m in monitors)
+        // Stage 3 debug: seed the HDTV device path detected in Stage 2
+        _configService.Save(_configService.Current with
         {
-            System.Diagnostics.Debug.WriteLine(
-                $"  [{(m.IsPrimary ? "PRIMARY" : "      ")}] {m.FriendlyName}");
-            System.Diagnostics.Debug.WriteLine(
-                $"            Bounds:     {m.Bounds}");
-            System.Diagnostics.Debug.WriteLine(
-                $"            DevicePath: {m.DevicePath}");
-        }
+            HdtvDisplayDevicePath =
+                @"\\?\DISPLAY#SAM7202#5&1470b2ba&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}",
+            // MouseDwellSeconds = 0 so we see instant cursor zone changes (no dwell wait)
+            MouseDwellSeconds = 0,
+            PollIntervalSeconds = 1,
+        });
 
-        if (monitors.Count == 0)
-            System.Diagnostics.Debug.WriteLine("  (no monitors returned)");
+        _tracker = new ActivityTracker(_displayService, _configService);
+        _tracker.SampleProduced += OnSample;
+        _tracker.Start();
 
-        System.Diagnostics.Debug.WriteLine("=======================");
-
-        // Signal app to show a message box so the user can verify output in a debugger
-        // or the Output window. Then exit cleanly.
-        System.Windows.Application.Current.Dispatcher.InvokeAsync(async () =>
+        System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
         {
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine("Active monitors detected:\n");
-            foreach (var m in monitors)
-            {
-                sb.AppendLine($"{(m.IsPrimary ? "[PRIMARY] " : "          ")}{m.FriendlyName}");
-                sb.AppendLine($"  Bounds: {m.Bounds}");
-                sb.AppendLine($"  Path:   {m.DevicePath}\n");
-            }
-
-            if (monitors.Count == 0)
-                sb.AppendLine("⚠ No monitors returned — check DisplayService implementation.");
-
             System.Windows.MessageBox.Show(
-                sb.ToString(),
-                "DefaultMonitorSwitcher — Stage 2: Monitor Enumeration",
+                "Activity tracker is running.\n\n" +
+                "Move your mouse and focus windows across all three monitors.\n" +
+                "Zone output is printed to the debug console.\n\n" +
+                "Click OK to stop.",
+                "DefaultMonitorSwitcher — Stage 3: Activity Tracker",
                 System.Windows.MessageBoxButton.OK,
                 System.Windows.MessageBoxImage.Information);
 
@@ -54,7 +41,21 @@ public sealed class AppBootstrapper : IDisposable
         });
     }
 
+    private static void OnSample(object? sender, ActivitySample sample)
+    {
+        var line = $"[{sample.Timestamp:HH:mm:ss.ff}]  " +
+                   $"Cursor={sample.CursorZone,-8}  " +
+                   $"FgWindow={sample.ForegroundWindowZone,-8}  " +
+                   $"Effective={sample.EffectiveZone}";
+        System.Diagnostics.Debug.WriteLine(line);
+        Console.WriteLine(line);
+    }
+
     public void OnSessionEnding() { }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        _tracker?.Stop();
+        _tracker?.Dispose();
+    }
 }
