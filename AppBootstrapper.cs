@@ -34,10 +34,15 @@ public sealed class AppBootstrapper : IDisposable
         if (_trayIcon.ContextMenu is { } menu)
             menu.DataContext = trayVm;
 
-        // Load the .exe's own icon for the tray
-        var iconPath = Environment.ProcessPath
-            ?? System.Reflection.Assembly.GetEntryAssembly()!.Location;
-        _trayIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(iconPath);
+        // Load icon from embedded WPF resource; fall back to system default
+        var iconUri    = new Uri("pack://application:,,,/UI/Resources/Icons/app.ico");
+        var iconStream = System.Windows.Application.GetResourceStream(iconUri)?.Stream;
+        _trayIcon.Icon = iconStream != null
+            ? new System.Drawing.Icon(iconStream)
+            : System.Drawing.SystemIcons.Application;
+
+        // Icon must be set before making the tray icon visible
+        _trayIcon.Visibility = System.Windows.Visibility.Visible;
 
         // ── Attach notifications to tray ──────────────────────────────────
         var notif = (NotificationService)_services.GetRequiredService<INotificationService>();
