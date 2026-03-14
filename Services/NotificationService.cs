@@ -1,42 +1,90 @@
 using DefaultMonitorSwitcher.Core;
 using Hardcodet.Wpf.TaskbarNotification;
+using Microsoft.Toolkit.Uwp.Notifications;
+using Microsoft.Win32;
+using Windows.UI.Notifications;
 
 namespace DefaultMonitorSwitcher.Services;
 
 public sealed class NotificationService : INotificationService
 {
+    private const string AppId    = "DefaultMonitorSwitcher";
+    private const string ToastTag = "switch";
+
     private TaskbarIcon? _trayIcon;
 
     /// <summary>Called by AppBootstrapper after the tray icon is created.</summary>
-    public void Attach(TaskbarIcon trayIcon) => _trayIcon = trayIcon;
+    public void Attach(TaskbarIcon trayIcon)
+    {
+        _trayIcon = trayIcon;
+        EnsureAumidRegistered();
+    }
 
     public void ShowSwitchNotification(SwitchDirection direction, SwitchReason reason, SwitchResult result)
     {
-        if (_trayIcon == null) return;
-
         string title = direction == SwitchDirection.Forward
             ? "Switched to HDTV"
             : "Switched to Desktop";
 
-        string body = reason switch
+        string body = (direction, reason) switch
         {
-            SwitchReason.ExclusiveHdtvActivity    => "Activity detected on HDTV.",
-            SwitchReason.ExclusiveDesktopActivity => "Activity detected on desktop.",
-            SwitchReason.IdleTimeout              => "System idle — reverting to desktop.",
-            SwitchReason.Manual                   => "Manually reverted.",
-            SwitchReason.Startup                  => "Reverted at startup.",
-            SwitchReason.SessionEnding            => "Session ending — reverting.",
-            _                                     => reason.ToString(),
+            (SwitchDirection.Revert,  SwitchReason.IdleTimeout)              => "No HDTV activity — reverting to desktop.",
+            (SwitchDirection.Revert,  SwitchReason.ExclusiveDesktopActivity) => "Activity returned to desk monitors.",
+            (SwitchDirection.Revert,  SwitchReason.SessionEnding)            => "Session ending — reverting to desktop.",
+            (SwitchDirection.Revert,  SwitchReason.Startup)                  => "HDTV was primary at startup — reverting.",
+            (SwitchDirection.Revert,  SwitchReason.Manual)                   => "Manually reverted to desktop.",
+            (SwitchDirection.Forward, SwitchReason.ExclusiveHdtvActivity)    => "Exclusive HDTV activity detected.",
+            (SwitchDirection.Forward, SwitchReason.Manual)                   => "Manually switched to HDTV.",
+            _                                                                 => reason.ToString(),
         };
 
         if (result == SwitchResult.AudioFailed)
             body += " (audio switch failed)";
 
-        _trayIcon.ShowBalloonTip(title, body, BalloonIcon.Info);
+        ShowToast(title, body);
     }
 
-    public void ShowWarning(string message)
+    public void ShowWarning(string message) => ShowToast("DefaultMonitorSwitcher", message);
+
+    // ── Toast helpers ─────────────────────────────────────────────────────────
+
+    private void ShowToast(string title, string body)
     {
-        _trayIcon?.ShowBalloonTip("DefaultMonitorSwitcher", message, BalloonIcon.Warning);
+        try
+        {
+            var xml = new ToastContentBuilder()
+                .AddText(title)
+                .AddText(body)
+                .GetToastContent()
+                .GetXml();
+
+            var notif = new ToastNotification(xml)
+            {
+                Tag            = ToastTag,
+                ExpirationTime = DateTimeOffset.Now.AddMinutes(3),
+            };
+
+            ToastNotificationManager.CreateToastNotifier(AppId).Show(notif);
+        }
+        catch
+        {
+            // Fall back to tray balloon if UWP toast fails
+            _trayIcon?.ShowBalloonTip(title, body, Hardcodet.Wpf.TaskbarNotification.BalloonIcon.Info);
+        }
+    }
+
+    /// <summary>
+    /// Registers a minimal AUMID entry under HKCU so Windows can attribute
+    /// toast notifications to this app without MSIX packaging.
+    /// </summary>
+    private static void EnsureAumidRegistered()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(
+                $@"Software\Classes\AppUserModelId\{AppId}");
+            key.SetValue("DisplayName", AppId);
+        }
+        catch { }
     }
 }
