@@ -32,7 +32,7 @@ public sealed class ConfigurationService : IConfigurationService
         try
         {
             await using var stream = File.OpenRead(ConfigFilePath);
-            var loaded = await JsonSerializer.DeserializeAsync<AppConfiguration>(stream, JsonOptions, ct);
+            var loaded = await JsonSerializer.DeserializeAsync<AppConfiguration>(stream, JsonOptions, ct).ConfigureAwait(false);
             Current = loaded ?? new AppConfiguration();
         }
         catch (Exception)

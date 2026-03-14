@@ -145,6 +145,8 @@ def render(size):
 # ── Build .ico ────────────────────────────────────────────────────────────────
 
 def make_ico(out_path):
+    import io, struct
+
     sizes  = [16, 24, 32, 48, 64, 128, 256]
     frames = []
     for sz in sizes:
@@ -155,12 +157,32 @@ def make_ico(out_path):
             img = render(sz)
         frames.append(img)
 
-    frames[0].save(
-        out_path,
-        format="ICO",
-        sizes=[(f.width, f.height) for f in frames],
-        append_images=frames[1:],
-    )
+    # Encode each frame as PNG in memory, then assemble ICO manually.
+    # Pillow's built-in ICO writer drops all but one frame via append_images.
+    png_bufs = []
+    for img in frames:
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        png_bufs.append(buf.getvalue())
+
+    count  = len(frames)
+    dir_sz = count * 16
+    header = struct.pack("<HHH", 0, 1, count)   # reserved, type=ICO, count
+
+    # Build directory entries
+    offset = 6 + dir_sz
+    entries = b""
+    for i, (img, data) in enumerate(zip(frames, png_bufs)):
+        w = img.width  if img.width  < 256 else 0
+        h = img.height if img.height < 256 else 0
+        entries += struct.pack("<BBBBHHII", w, h, 0, 0, 1, 32, len(data), offset)
+        offset += len(data)
+
+    with open(out_path, "wb") as f:
+        f.write(header + entries)
+        for data in png_bufs:
+            f.write(data)
+
     print(f"Wrote {out_path}  ({[f.width for f in frames]})")
 
 
