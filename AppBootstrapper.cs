@@ -1,81 +1,102 @@
 using DefaultMonitorSwitcher.Core;
+using DefaultMonitorSwitcher.Infrastructure.Audio;
 using DefaultMonitorSwitcher.Infrastructure.Display;
 using DefaultMonitorSwitcher.Infrastructure.Input;
 using DefaultMonitorSwitcher.Services;
+using DefaultMonitorSwitcher.UI;
+using DefaultMonitorSwitcher.UI.Settings;
+using Hardcodet.Wpf.TaskbarNotification;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DefaultMonitorSwitcher;
 
 public sealed class AppBootstrapper : IDisposable
 {
-    private readonly DisplayService       _displayService = new();
-    private readonly ConfigurationService _configService  = new();
-    private ActivityTracker?   _tracker;
-    private WindowEventSource? _windowEventSource;
-
-    private const string HdtvPath =
-        @"\\?\DISPLAY#SAM7202#5&1470b2ba&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}";
+    private ServiceProvider? _services;
+    private TaskbarIcon?      _trayIcon;
 
     public void Start()
     {
-        _configService.Save(_configService.Current with
-        {
-            HdtvDisplayDevicePath = HdtvPath,
-            MouseDwellSeconds     = 0,
-            PollIntervalSeconds   = 1,
-        });
+        // ── Build DI container ────────────────────────────────────────────
+        var sc = new ServiceCollection();
+        RegisterServices(sc);
+        _services = sc.BuildServiceProvider();
 
-        // WindowEventSource MUST be started on the UI thread
-        var dispatcher = System.Windows.Application.Current.Dispatcher;
-        var monitors   = _displayService.GetActiveMonitors();
-        var hdtv       = monitors.FirstOrDefault(m => m.DevicePath == HdtvPath);
+        // ── Load configuration ────────────────────────────────────────────
+        var config = _services.GetRequiredService<IConfigurationService>();
+        config.InitializeAsync().AsTask().GetAwaiter().GetResult();
 
-        _windowEventSource = new WindowEventSource(_displayService, dispatcher);
-        if (hdtv != null)
-        {
-            dispatcher.Invoke(() => _windowEventSource.Start(hdtv));
-            _windowEventSource.WindowMovedToHdtv += (_, _) =>
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss.ff}]  *** WindowMovedToHdtv fired ***");
-        }
-        else
-        {
-            Console.WriteLine("HDTV monitor not found — WindowEventSource not started.");
-        }
+        // ── Wire tray icon ────────────────────────────────────────────────
+        _trayIcon = (TaskbarIcon)System.Windows.Application.Current.Resources["TrayIcon"];
 
-        _tracker = new ActivityTracker(_displayService, _configService);
-        _tracker.SampleProduced += OnSample;
-        _tracker.Start();
+        var trayVm = _services.GetRequiredService<TrayIconViewModel>();
+        _trayIcon.DataContext = trayVm;
+        if (_trayIcon.ContextMenu is { } menu)
+            menu.DataContext = trayVm;
 
-        dispatcher.InvokeAsync(() =>
-        {
-            System.Windows.MessageBox.Show(
-                "Activity tracker + window-move hook running.\n\n" +
-                "• Move mouse / focus windows across monitors → see zone output\n" +
-                "• Move or Win+Shift+Arrow a window to the TV → see WindowMovedToHdtv\n\n" +
-                "Click OK to stop.",
-                "DefaultMonitorSwitcher — Stage 4: Window Event Source",
-                System.Windows.MessageBoxButton.OK,
-                System.Windows.MessageBoxImage.Information);
+        // Load the .exe's own icon for the tray
+        var iconPath = Environment.ProcessPath
+            ?? System.Reflection.Assembly.GetEntryAssembly()!.Location;
+        _trayIcon.Icon = System.Drawing.Icon.ExtractAssociatedIcon(iconPath);
 
-            System.Windows.Application.Current.Shutdown();
-        });
+        // ── Attach notifications to tray ──────────────────────────────────
+        var notif = (NotificationService)_services.GetRequiredService<INotificationService>();
+        notif.Attach(_trayIcon);
+
+        // ── Start controller (must be on UI thread — WinEventHook) ────────
+        _services.GetRequiredService<ISwitchController>()
+                 .StartAsync()
+                 .AsTask().GetAwaiter().GetResult();
+
+        // ── Honour RunOnStartup setting ────────────────────────────────────
+        var startup = _services.GetRequiredService<IStartupService>();
+        if (config.Current.RunOnStartup && !startup.IsRegistered) startup.Register();
+        if (!config.Current.RunOnStartup &&  startup.IsRegistered) startup.Unregister();
     }
 
-    private static void OnSample(object? sender, ActivitySample sample)
+    public void OnSessionEnding()
     {
-        Console.WriteLine(
-            $"[{sample.Timestamp:HH:mm:ss.ff}]  " +
-            $"Cursor={sample.CursorZone,-8}  " +
-            $"FgWindow={sample.ForegroundWindowZone,-8}  " +
-            $"Effective={sample.EffectiveZone}");
+        _services?.GetRequiredService<ISwitchController>()
+                  .RevertNow(SwitchReason.SessionEnding);
     }
-
-    public void OnSessionEnding() { }
 
     public void Dispose()
     {
-        _tracker?.Stop();
-        _tracker?.Dispose();
-        _windowEventSource?.Stop();
-        _windowEventSource?.Dispose();
+        _services?.GetRequiredService<TrayIconViewModel>().Dispose();
+        _services?.GetRequiredService<ISwitchController>().Dispose();
+        _trayIcon?.Dispose();
+        _services?.Dispose();
+    }
+
+    // ── Service registration ──────────────────────────────────────────────────
+
+    private static void RegisterServices(IServiceCollection sc)
+    {
+        // Infrastructure
+        sc.AddSingleton<IDisplayService, DisplayService>();
+        sc.AddSingleton<IAudioService,   AudioService>();
+        sc.AddSingleton<IWindowEventSource>(sp => new WindowEventSource(
+            sp.GetRequiredService<IDisplayService>(),
+            System.Windows.Application.Current.Dispatcher));
+
+        // Services
+        sc.AddSingleton<IConfigurationService, ConfigurationService>();
+        sc.AddSingleton<INotificationService,  NotificationService>();
+        sc.AddSingleton<IStartupService,       StartupService>();
+        sc.AddSingleton<IActivityTracker,      ActivityTracker>();
+        sc.AddSingleton<ISwitchController,     SwitchController>();
+
+        // ViewModels
+        sc.AddSingleton(sp => new TrayIconViewModel(
+            sp.GetRequiredService<ISwitchController>(),
+            sp.GetRequiredService<IConfigurationService>(),
+            () => sp.GetRequiredService<SettingsViewModel>()));
+
+        sc.AddTransient(sp => new SettingsViewModel(
+            sp.GetRequiredService<IDisplayService>(),
+            sp.GetRequiredService<IAudioService>(),
+            sp.GetRequiredService<IConfigurationService>(),
+            sp.GetRequiredService<IStartupService>(),
+            sp.GetRequiredService<ISwitchController>()));
     }
 }

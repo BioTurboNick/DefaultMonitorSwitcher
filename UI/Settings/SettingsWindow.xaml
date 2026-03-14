@@ -1,0 +1,115 @@
+<Window x:Class="DefaultMonitorSwitcher.UI.Settings.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DefaultMonitorSwitcher — Settings"
+        Width="500" SizeToContent="Height"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen">
+    <StackPanel Margin="16">
+
+        <!-- ── Display ─────────────────────────────────────────────────── -->
+        <TextBlock Text="Display" FontWeight="SemiBold" Margin="0,0,0,6"/>
+        <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="180"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="HDTV monitor:" VerticalAlignment="Center"/>
+            <ComboBox   Grid.Row="0" Grid.Column="1"
+                        ItemsSource="{Binding AvailableMonitors}"
+                        SelectedItem="{Binding SelectedHdtvMonitor}"
+                        DisplayMemberPath="FriendlyName"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Desktop primary:" VerticalAlignment="Center" Margin="0,6,0,0"/>
+            <ComboBox   Grid.Row="1" Grid.Column="1" Margin="0,6,0,0"
+                        ItemsSource="{Binding AvailableMonitors}"
+                        SelectedItem="{Binding SelectedDesktopPrimaryMonitor}"
+                        DisplayMemberPath="FriendlyName"/>
+        </Grid>
+
+        <!-- ── Audio ───────────────────────────────────────────────────── -->
+        <TextBlock Text="Audio" FontWeight="SemiBold" Margin="0,0,0,6"/>
+        <CheckBox Content="Enable audio switching"         IsChecked="{Binding AudioSwitchingEnabled}"      Margin="0,0,0,4"/>
+        <CheckBox Content="Respect manual audio override"  IsChecked="{Binding RespectManualAudioOverride}" Margin="0,0,0,8"/>
+        <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="180"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="HDTV audio:" VerticalAlignment="Center"/>
+            <ComboBox   Grid.Row="0" Grid.Column="1"
+                        ItemsSource="{Binding AvailableEndpoints}"
+                        SelectedItem="{Binding SelectedHdtvAudioEndpoint}"
+                        DisplayMemberPath="FriendlyName"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Desktop audio:" VerticalAlignment="Center" Margin="0,6,0,0"/>
+            <ComboBox   Grid.Row="1" Grid.Column="1" Margin="0,6,0,0"
+                        ItemsSource="{Binding AvailableEndpoints}"
+                        SelectedItem="{Binding SelectedDesktopAudioEndpoint}"
+                        DisplayMemberPath="FriendlyName"/>
+        </Grid>
+
+        <!-- ── Timings ─────────────────────────────────────────────────── -->
+        <TextBlock Text="Timings (seconds)" FontWeight="SemiBold" Margin="0,0,0,6"/>
+        <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="220"/>
+                <ColumnDefinition Width="80"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Idle timeout (HDTV → countdown):" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="0" Grid.Column="1" Text="{Binding IdleTimeoutSeconds}" Margin="0,2,0,2"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Revert dwell (desktop/idle dwell):" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="1" Grid.Column="1" Text="{Binding DesktopDwellSeconds}" Margin="0,2,0,2"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="HDTV switch dwell:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="2" Grid.Column="1" Text="{Binding HdtvDwellSeconds}" Margin="0,2,0,2"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Mouse dwell:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="3" Grid.Column="1" Text="{Binding MouseDwellSeconds}" Margin="0,2,0,2"/>
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Poll interval:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="4" Grid.Column="1" Text="{Binding PollIntervalSeconds}" Margin="0,2,0,2"/>
+
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Elevated poll interval:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="5" Grid.Column="1" Text="{Binding ElevatedPollIntervalSeconds}" Margin="0,2,0,2"/>
+
+            <TextBlock Grid.Row="6" Grid.Column="0" Text="Elevated poll duration:" VerticalAlignment="Center"/>
+            <TextBox   Grid.Row="6" Grid.Column="1" Text="{Binding ElevatedPollDurationSeconds}" Margin="0,2,0,2"/>
+        </Grid>
+
+        <!-- ── General ─────────────────────────────────────────────────── -->
+        <TextBlock Text="General" FontWeight="SemiBold" Margin="0,0,0,6"/>
+        <CheckBox Content="Run on startup"  IsChecked="{Binding RunOnStartup}"      Margin="0,0,0,4"/>
+        <CheckBox Content="TV Show Mode"    IsChecked="{Binding TvShowModeEnabled}" Margin="0,0,0,12"/>
+
+        <!-- ── Buttons ─────────────────────────────────────────────────── -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Refresh Devices" Command="{Binding RefreshDevicesCommand}" Width="110" Margin="0,0,8,0"/>
+            <Button Content="Save"            Command="{Binding SaveCommand}"           Width="80"  Margin="0,0,8,0" IsDefault="True"/>
+            <Button Content="Cancel"          Command="{Binding CancelCommand}"         Width="80"  IsCancel="True"/>
+        </StackPanel>
+
+    </StackPanel>
+</Window>
