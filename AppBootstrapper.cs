@@ -32,17 +32,37 @@ public sealed class AppBootstrapper : IDisposable
         var trayVm = _services.GetRequiredService<TrayIconViewModel>();
         _trayIcon.DataContext = trayVm;
         if (_trayIcon.ContextMenu is { } menu)
+        {
             menu.DataContext = trayVm;
+            menu.Opened += FixContextMenuDpiPlacement;
+        }
 
         // Load icon from embedded WPF resource; fall back to system default
-        var iconUri    = new Uri("pack://application:,,,/UI/Resources/Icons/app.ico");
-        var iconStream = System.Windows.Application.GetResourceStream(iconUri)?.Stream;
-        _trayIcon.Icon = iconStream != null
-            ? new System.Drawing.Icon(iconStream)
-            : System.Drawing.SystemIcons.Application;
+        var log = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "DefaultMonitorSwitcher", "startup.log");
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(log)!);
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            var iconUri    = new Uri("pack://application:,,,/UI/Resources/Icons/app.ico");
+            var iconStream = System.Windows.Application.GetResourceStream(iconUri)?.Stream;
+            sb.AppendLine($"[icon] stream={iconStream?.Length.ToString() ?? "null"}");
+            _trayIcon.Icon = iconStream != null
+                ? new System.Drawing.Icon(iconStream)
+                : System.Drawing.SystemIcons.Application;
+            sb.AppendLine($"[icon] set ok {_trayIcon.Icon.Width}px");
+        }
+        catch (Exception ex)
+        {
+            sb.AppendLine($"[icon] FAILED: {ex}");
+            _trayIcon.Icon = System.Drawing.SystemIcons.Application;
+        }
 
         // Icon must be set before making the tray icon visible
         _trayIcon.Visibility = System.Windows.Visibility.Visible;
+        sb.AppendLine("[tray] Visibility=Visible");
+        System.IO.File.WriteAllText(log, sb.ToString());
 
         // ── Attach notifications to tray ──────────────────────────────────
         var notif = (NotificationService)_services.GetRequiredService<INotificationService>();
@@ -57,6 +77,28 @@ public sealed class AppBootstrapper : IDisposable
         var startup = _services.GetRequiredService<IStartupService>();
         if (config.Current.RunOnStartup && !startup.IsRegistered) startup.Register();
         if (!config.Current.RunOnStartup &&  startup.IsRegistered) startup.Unregister();
+    }
+
+    // Hardcodet sets Placement=AbsolutePoint with raw physical-pixel coordinates,
+    // which land in the wrong spot on DPI-scaled or multi-monitor setups.
+    // Re-correct in the Opened event using WPF logical coordinates.
+    private static void FixContextMenuDpiPlacement(object sender, System.Windows.RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.ContextMenu menu) return;
+
+        Windows.Win32.PInvoke.GetCursorPos(out var pt);
+
+        var src = System.Windows.PresentationSource.FromVisual(menu);
+        double dpiX = 1.0, dpiY = 1.0;
+        if (src?.CompositionTarget != null)
+        {
+            dpiX = src.CompositionTarget.TransformFromDevice.M11;
+            dpiY = src.CompositionTarget.TransformFromDevice.M22;
+        }
+
+        menu.Placement         = System.Windows.Controls.Primitives.PlacementMode.AbsolutePoint;
+        menu.HorizontalOffset  = pt.X * dpiX;
+        menu.VerticalOffset    = pt.Y * dpiY;
     }
 
     public void OnSessionEnding()
