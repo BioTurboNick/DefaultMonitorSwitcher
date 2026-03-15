@@ -3,7 +3,7 @@
 ## Minimum Requirements
 
 - **OS**: Windows 10 version 1803 (April 2018 Update) or later
-  — required for `IAudioPolicyConfig`
+  — required for `IPolicyConfig` / `CPolicyConfigClient` (undocumented audio COM API)
 - **Runtime**: .NET 10
 
 ## 1. Folder / Namespace Structure
@@ -90,16 +90,19 @@ public enum SwitcherState
 /// <summary>The reason a switch (revert or forward) was requested.</summary>
 public enum SwitchReason
 {
-    Startup,
     IdleTimeout,
-    DesktopDwell,
+    ExclusiveDesktopActivity,
     SessionEnding,
-    HdtvDwell,
+    Startup,
     Manual,
+    ExclusiveHdtvActivity,
 }
 
 /// <summary>Direction of the switch.</summary>
-public enum SwitchDirection { ToDesktop, ToHdtv }
+public enum SwitchDirection { Forward, Revert }
+
+/// <summary>Result of an attempted switch operation.</summary>
+public enum SwitchResult { Success, NoActionNeeded, DisplayNotFound, AudioFailed, Failed }
 
 /// <summary>Tray icon visual state.</summary>
 public enum TrayIconState { Neutral, Active, IdleCountdown, TvShowMode }
@@ -115,41 +118,37 @@ namespace DefaultMonitorSwitcher.Core;
 /// FriendlyName comes from QueryDisplayConfig DISPLAYCONFIG_TARGET_DEVICE_NAME.
 /// DevicePath is the stable \\?\DISPLAY#... path, not the volatile \\.\DISPLAYn number.
 /// </summary>
-public sealed record MonitorInfo(
-    string DevicePath,       // stable \\?\DISPLAY#... form from DISPLAYCONFIG_TARGET_DEVICE_NAME
-    string FriendlyName,     // EDID model name, e.g. "QBQ90" or "Dell S2721QS"
-    bool   IsPrimary,
-    ulong  AdapterId,        // LUID as ulong (low | high << 32)
-    uint   TargetId
-);
+public sealed record MonitorInfo
+{
+    public required string DevicePath    { get; init; }  // stable \\?\DISPLAY#... path
+    public required string FriendlyName  { get; init; }  // EDID model name
+    public required System.Drawing.Rectangle Bounds { get; init; }  // physical screen coords
+    public bool   IsPrimary              { get; init; }
+    /// <summary>Position-qualified label, e.g. "Left — Samsung…". Set by DisplayService.</summary>
+    public string DisplayLabel           { get; init; } = "";
+}
 
 /// <summary>
 /// Immutable snapshot of an audio playback endpoint.
 /// </summary>
-public sealed record AudioEndpointInfo(
-    string DeviceId,         // IMMDevice.GetId()
-    string FriendlyName      // PKEY_Device_FriendlyName, e.g. "QBQ90 (NVIDIA High Definition Audio)"
-);
-
-/// <summary>
-/// Result of an attempted switch operation.
-/// </summary>
-public sealed record SwitchResult(
-    bool   DisplaySwitched,
-    bool   AudioSwitched,
-    string? AudioFailureReason
-);
+public sealed record AudioEndpointInfo
+{
+    public required string DeviceId     { get; init; }  // IMMDevice.GetId()
+    public required string FriendlyName { get; init; }  // PKEY_Device_FriendlyName
+}
 
 /// <summary>
 /// Carries the result of one activity poll tick.
 /// </summary>
-public sealed record ActivitySample(
-    ActivityZone   CursorZone,
-    ActivityZone   ForegroundWindowZone,
-    /// <summary>Effective zone after precedence and mouse-dwell smoothing rules.</summary>
-    ActivityZone   EffectiveZone,
-    DateTimeOffset Timestamp
-);
+public sealed record ActivitySample
+{
+    public required DateTimeOffset Timestamp            { get; init; }
+    public required ActivityZone   CursorZone           { get; init; }
+    public required ActivityZone   ForegroundWindowZone { get; init; }
+    /// <summary>Effective zone after precedence rules: ForegroundWindow takes priority over Cursor.</summary>
+    public ActivityZone EffectiveZone =>
+        ForegroundWindowZone != ActivityZone.None ? ForegroundWindowZone : CursorZone;
+};
 
 /// <summary>
 /// All persisted user configuration. Serialised to / from config.json.
@@ -167,6 +166,8 @@ public sealed record AppConfiguration
     public int     IdleTimeoutSeconds               { get; init; } = 300;
     public int     DesktopDwellSeconds              { get; init; } = 120;
     public int     HdtvDwellSeconds                 { get; init; } = 60;
+    /// <summary>HDTV dwell threshold used when elevated polling is active (§5.8).</summary>
+    public int     ElevatedHdtvDwellSeconds         { get; init; } = 12;
     public int     MouseDwellSeconds                { get; init; } = 10;
     public int     PollIntervalSeconds              { get; init; } = 5;
     public int     ElevatedPollIntervalSeconds      { get; init; } = 1;
@@ -210,20 +211,17 @@ public interface IDisplayService
     /// <summary>Enumerates currently active monitors via QueryDisplayConfig.</summary>
     IReadOnlyList<MonitorInfo> GetActiveMonitors();
 
-    /// <summary>Returns the monitor containing the given screen-coordinate point, or null.</summary>
-    MonitorInfo? MonitorFromPoint(int x, int y);
+    /// <summary>Returns the device path of the current Windows primary monitor, or null.</summary>
+    string? GetPrimaryMonitorDevicePath();
 
-    /// <summary>Returns the monitor containing the foreground window's largest overlap, or null.</summary>
-    MonitorInfo? GetForegroundWindowMonitor();
+    /// <summary>Returns the monitor containing the given window handle's largest overlap, or null.</summary>
+    MonitorInfo? MonitorFromWindowHandle(nint hwnd);
 
     /// <summary>
-    /// Applies a new primary display via SetDisplayConfig (SDC_APPLY | SDC_SAVE_TO_DATABASE).
-    /// Throws DisplaySwitchException on failure.
+    /// Attempts to set the given device path as the primary display via SetDisplayConfig.
+    /// Returns false on failure and populates errorMessage.
     /// </summary>
-    void SetPrimaryMonitor(MonitorInfo monitor);
-
-    /// <summary>Returns true if the given monitor is currently the Windows primary display.</summary>
-    bool IsPrimary(MonitorInfo monitor);
+    bool TrySetPrimaryMonitor(string devicePath, out string? errorMessage);
 }
 ```
 
@@ -247,8 +245,9 @@ public interface IAudioService
     AudioEndpointInfo? AutoDetectEndpointForMonitor(MonitorInfo monitor);
 
     /// <summary>
-    /// Sets the Windows default playback device for all three ERole values via IAudioPolicyConfig.
-    /// Returns false (does not throw) on COM failure; populates failureReason.
+    /// Sets the Windows default playback device for all three ERole values via
+    /// IPolicyConfig / CPolicyConfigClient. Returns false (does not throw) on COM
+    /// failure; populates failureReason.
     /// </summary>
     bool TrySetDefaultPlaybackDevice(string deviceId, out string? failureReason);
 }
@@ -269,6 +268,9 @@ public interface IActivityTracker : IDisposable
     /// ElevatedPollDurationSeconds. Calling again while already elevated resets the expiry.
     /// </summary>
     void ActivateElevatedPolling();
+
+    /// <summary>True while the elevated poll interval is in effect.</summary>
+    bool IsElevatedPollingActive { get; }
 
     void Start();
     void Stop();
@@ -307,7 +309,7 @@ public interface ISwitchController : IDisposable
     /// <summary>Raised on the UI thread when CurrentState changes.</summary>
     event EventHandler<SwitcherState> StateChanged;
 
-    /// <summary>Raised on the UI thread after any switch completes.</summary>
+    /// <summary>Raised after any switch completes (may be background thread).</summary>
     event EventHandler<(SwitchDirection Direction, SwitchReason Reason, SwitchResult Result)> SwitchCompleted;
 
     /// <summary>
@@ -396,16 +398,15 @@ namespace DefaultMonitorSwitcher.Services;
 public sealed class SwitchController : ISwitchController
 {
     public SwitchController(
-        IActivityTracker activityTracker,
-        IWindowEventSource windowEventSource,
-        IDisplayService displayService,
-        IAudioService audioService,
-        IConfigurationService configService,
-        INotificationService notificationService,
-        System.Windows.Threading.Dispatcher uiDispatcher);
+        IDisplayService        display,
+        IAudioService          audio,
+        IActivityTracker       activity,
+        IWindowEventSource     windowEvents,
+        IConfigurationService  config,
+        INotificationService   notifications);
 
-    public SwitcherState CurrentState { get; private set; }
-    public bool TvShowModeEnabled { get; set; }
+    public SwitcherState CurrentState { get; }  // lock-protected
+    public bool TvShowModeEnabled { get; set; } // lock-protected
     public event EventHandler<SwitcherState>? StateChanged;
     public event EventHandler<(SwitchDirection, SwitchReason, SwitchResult)>? SwitchCompleted;
     public ValueTask StartAsync(CancellationToken ct = default);
@@ -414,23 +415,21 @@ public sealed class SwitchController : ISwitchController
     public void Dispose();
 
     // State machine internals
-    private readonly Lock _stateLock = new();
-    private DateTimeOffset _hdtvLastActivityTime;      // used for HdtvIdleCountdown
-    private DateTimeOffset _desktopDwellStartTime;     // used for HdtvDesktopDwelling
-    private DateTimeOffset _hdtvDwellStartTime;        // used for DesktopHdtvDwelling
-    private void OnSampleProduced(object? sender, ActivitySample sample);   // called on background thread
-    private void OnWindowMovedToHdtv(object? sender, EventArgs e);          // called on UI thread
-    private void TransitionTo(SwitcherState newState);                      // must be called under _stateLock
-    private SwitchResult ExecuteSwitch(SwitchDirection direction, SwitchReason reason);
-    private MonitorInfo? ResolveTargetDesktopMonitor();   // preferred → fallback → null
-    private MonitorInfo? ResolveHdtvMonitor();
-    private string? ResolveAudioDeviceId(SwitchDirection direction);
-    // ResolveAudioDeviceId returns null (skip audio switch) when:
-    //   - AudioSwitchingEnabled == false, OR
-    //   - RespectManualAudioOverride == true AND GetDefaultPlaybackDeviceId()
-    //     does not match the expected source device for this direction
-    //     (i.e. the user has manually changed audio away from the expected device)
-    // Otherwise returns the target device ID (config override if set, else auto-detected).
+    private readonly object _lock = new();
+    // Multi-purpose timestamp — semantics vary by state:
+    //   DesktopHdtvDwelling  → time we first saw HDTV activity
+    //   HdtvActive           → time of last activity (for idle detection)
+    //   HdtvIdleCountdown    → time we entered the countdown
+    //   HdtvDesktopDwelling  → time we first saw desktop activity
+    private DateTimeOffset _dwellStart;
+    private string? _lastSetAudioId;             // for RespectManualAudioOverride tracking
+    private void OnSampleProduced(object? sender, ActivitySample sample);   // background thread
+    private void OnWindowMovedToHdtv(object? sender, EventArgs e);          // UI thread
+    private void OnConfigurationChanged(object? sender, AppConfiguration cfg); // restarts window hook
+    private SwitchResult SwitchAudio(string? targetDeviceId, AppConfiguration cfg);
+    private static string? ResolveDesktopDisplayPath(AppConfiguration cfg, IReadOnlyList<MonitorInfo> monitors);
+    private string? ResolveDesktopAudioId(AppConfiguration cfg, string targetPath, IReadOnlyList<MonitorInfo> monitors);
+    private double HdtvDwellThreshold(AppConfiguration cfg); // returns ElevatedHdtvDwellSeconds or HdtvDwellSeconds
 }
 ```
 
@@ -439,14 +438,14 @@ public sealed class SwitchController : ISwitchController
 | From state | Condition | To state |
 |---|---|---|
 | `DesktopIdle` | Sample: EffectiveZone == Hdtv | `DesktopHdtvDwelling` |
-| `DesktopHdtvDwelling` | Sample: EffectiveZone != Hdtv | `DesktopIdle` |
-| `DesktopHdtvDwelling` | now − _hdtvDwellStartTime ≥ HdtvDwellSeconds | Forward switch → `HdtvActive` |
-| `HdtvActive` | Sample: EffectiveZone == None | `HdtvIdleCountdown` |
+| `DesktopHdtvDwelling` | Sample: EffectiveZone == Desktop or None | `DesktopIdle` |
+| `DesktopHdtvDwelling` | now − _dwellStart ≥ HdtvDwellThreshold() | Forward switch → `HdtvActive` |
+| `HdtvActive` | Sample: EffectiveZone == None && elapsed ≥ IdleTimeoutSeconds | `HdtvIdleCountdown` |
 | `HdtvActive` | Sample: EffectiveZone == Desktop | `HdtvDesktopDwelling` |
-| `HdtvIdleCountdown` | Sample: EffectiveZone == Hdtv | `HdtvActive` |
-| `HdtvIdleCountdown` | now − _hdtvLastActivityTime ≥ IdleTimeoutSeconds | Revert → `DesktopIdle` |
+| `HdtvIdleCountdown` | Sample: EffectiveZone != None | `HdtvActive` |
+| `HdtvIdleCountdown` | now − _dwellStart ≥ DesktopDwellSeconds | Revert → `DesktopIdle` |
 | `HdtvDesktopDwelling` | Sample: EffectiveZone == Hdtv | `HdtvActive` |
-| `HdtvDesktopDwelling` | EffectiveZone == Desktop && elapsed ≥ DesktopDwellSeconds && !TvShowMode | Revert → `DesktopIdle` |
+| `HdtvDesktopDwelling` | now − _dwellStart ≥ DesktopDwellSeconds | Revert → `DesktopIdle` |
 
 ### `Services/ConfigurationService.cs`
 
@@ -555,11 +554,13 @@ CsWin32 emits these into the `Windows.Win32` namespace hierarchy (e.g.
 `DisplayService` and `WindowEventSource` use the generated types directly —
 no wrapper file needed.
 
-> **IMMDeviceEnumerator coverage**: CsWin32 also covers `IMMDeviceEnumerator`,
+> **IMMDeviceEnumerator coverage**: CsWin32 covers `IMMDeviceEnumerator`,
 > `IMMDevice`, `IMMDeviceCollection`, `IPropertyStore`, and `PROPERTYKEY` via
-> the `Windows.Win32.Media.Audio` namespace. `MmDeviceInterop.cs` should be
-> removed in favour of these generated types once verified at implementation time.
-> `IAudioPolicyConfig` (undocumented) cannot be generated and remains manual.
+> the `Windows.Win32.Media.Audio` namespace. `MmDeviceInterop.cs` retains manual
+> COM declarations for these because the CsWin32-generated wrappers use unsafe
+> pointer types incompatible with `Marshal.GetActiveObject`-style interop patterns
+> used here. `IPolicyConfig` / `CPolicyConfigClient` (undocumented) cannot be
+> generated by CsWin32 and are always manual in `PolicyConfigInterop.cs`.
 
 ### `Infrastructure/Display/DisplayService.cs`
 
@@ -571,26 +572,25 @@ public sealed class DisplayService : IDisplayService
     public DisplayService();
 
     public IReadOnlyList<MonitorInfo> GetActiveMonitors();
-    public MonitorInfo? MonitorFromPoint(int x, int y);
-    public MonitorInfo? GetForegroundWindowMonitor();
-    public void SetPrimaryMonitor(MonitorInfo monitor);
-    public bool IsPrimary(MonitorInfo monitor);
+    public string? GetPrimaryMonitorDevicePath();
+    public MonitorInfo? MonitorFromWindowHandle(nint hwnd);
+    public bool TrySetPrimaryMonitor(string devicePath, out string? errorMessage);
 
-    // SetPrimaryMonitor implementation:
+    // TrySetPrimaryMonitor implementation:
     //   1. QueryDisplayConfig → paths[], modes[]
-    //   2. Find the DISPLAYCONFIG_MODE_INFO (type == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
-    //      whose targetId matches monitor.TargetId and adapterId matches monitor.AdapterId
+    //   2. Find the DISPLAYCONFIG_MODE_INFO (type == SOURCE) whose
+    //      DISPLAYCONFIG_TARGET_DEVICE_NAME.monitorDevicePath matches devicePath
     //   3. Compute offset = -sourceMode.position so the target lands at (0,0)
     //   4. Apply offset to all source positions in modes[]
     //   5. SetDisplayConfig(SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG |
     //                       SDC_SAVE_TO_DATABASE | SDC_ALLOW_CHANGES)
+    // GetActiveMonitors sets MonitorInfo.DisplayLabel to "Left — {name}" / "Right — {name}"
+    // based on Bounds.X ordering across active monitors.
     private static MonitorInfo BuildMonitorInfo(
         in DISPLAYCONFIG_PATH_INFO path,
-        DISPLAYCONFIG_MODE_INFO[] modes);
-}
-
-public sealed class DisplaySwitchException(string message, int win32Error)
-    : Exception(message);
+        DISPLAYCONFIG_MODE_INFO[] modes,
+        string leftRightPrefix);
+};
 ```
 
 ### `Infrastructure/Audio/PolicyConfigInterop.cs`
@@ -598,51 +598,42 @@ public sealed class DisplaySwitchException(string message, int win32Error)
 ```csharp
 namespace DefaultMonitorSwitcher.Infrastructure.Audio;
 
-// IAudioPolicyConfig — undocumented Windows internal interface available on
-// Windows 10 1803+. Preferred over the older IPolicyConfig because its vtable
-// is shorter and better verified by open-source projects (notably EarTrumpet).
-// IID sourced from EarTrumpet and cross-verified against Windows.Media.Audio.dll symbols.
-// Vtable must be verified against EarTrumpet's implementation before shipping:
-//   https://github.com/File-New-Project/EarTrumpet
+// IPolicyConfig — classic undocumented Windows COM interface for system-wide
+// default audio endpoint switching. Verified working on Windows 11 25H2.
+// IID: f8679f50-850a-41cf-9c72-430f290290c8
+// CLSID (CPolicyConfigClient): 870af99c-171d-4f9e-af0d-e63df40c2bc9
+//
+// NOTE: IAudioPolicyConfig (EarTrumpet approach, IID 2a59116d-...) is for
+// per-application audio redirection only and is broken/removed on Windows 11 25H2.
+// IPolicyConfig is the correct interface for system-wide switching.
 [ComImport]
-[Guid("2a59116d-6c4f-45e0-a74f-707e3fef9258")]
+[Guid("f8679f50-850a-41cf-9c72-430f290290c8")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-internal interface IAudioPolicyConfig
+internal interface IPolicyConfig
 {
-    // Slots 0–2: IUnknown (handled by runtime)
-    // Each stub below holds a vtable slot. Only SetDefaultEndpoint is called;
-    // all others are declared solely to keep slot indices correct.
-    void NotImpl1();  // slot 3
-    void NotImpl2();  // slot 4
-    void NotImpl3();  // slot 5
-    void NotImpl4();  // slot 6
-    void NotImpl5();  // slot 7
-    void NotImpl6();  // slot 8
-    void NotImpl7();  // slot 9
-    void NotImpl8();  // slot 10
+    // Slots 3–12: stubs to maintain vtable alignment
+    void NotImpl1();  void NotImpl2();  void NotImpl3();  void NotImpl4();
+    void NotImpl5();  void NotImpl6();  void NotImpl7();  void NotImpl8();
+    void NotImpl9();  void NotImpl10();
 
-    /// <summary>
-    /// Sets the Windows default audio playback endpoint for the given role.
-    /// Call for eConsole, eMultimedia, and eCommunications to fully switch.
-    /// </summary>
+    /// <summary>Sets the system default audio endpoint for the given role (slot 13).</summary>
     [PreserveSig]
     int SetDefaultEndpoint(
         [MarshalAs(UnmanagedType.LPWStr)] string deviceId,
-        ERole role);                                               // slot 11
+        ERole role);
+
+    [PreserveSig]
+    int SetEndpointVisibility(
+        [MarshalAs(UnmanagedType.LPWStr)] string deviceId,
+        [MarshalAs(UnmanagedType.Bool)]   bool   isVisible);
 }
 
-// CLSID of the concrete COM class implementing IAudioPolicyConfig
 [ComImport]
-[Guid("1776DCD9-FA97-4463-A8B3-AD4B5C5DAD27")]
-internal class AudioPolicyConfigFactory { }
+[Guid("870af99c-171d-4f9e-af0d-e63df40c2bc9")]
+internal class CPolicyConfigClient { }
 
 internal enum ERole { eConsole = 0, eMultimedia = 1, eCommunications = 2 }
 ```
-
-> **Implementation note**: Before writing `AudioService`, verify the exact slot count
-> and `SetDefaultEndpoint` index against EarTrumpet's current `AudioPolicyConfig.cs`.
-> The `NotImpl` stub count above is a placeholder pending that verification.
-> Correct vtable verification is the single highest-risk step in the audio subsystem.
 
 ### `Infrastructure/Audio/MmDeviceInterop.cs`
 
@@ -751,7 +742,7 @@ public sealed class AudioService : IAudioService
     //   in each endpoint.FriendlyName. Returns first match.
 
     // TrySetDefaultPlaybackDevice:
-    //   Creates AudioPolicyConfigFactory COM object, casts to IAudioPolicyConfig.
+    //   Creates CPolicyConfigClient COM object, casts to IPolicyConfig.
     //   Calls SetDefaultEndpoint(deviceId, eConsole),
     //         SetDefaultEndpoint(deviceId, eMultimedia),
     //         SetDefaultEndpoint(deviceId, eCommunications).
@@ -842,12 +833,9 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private MonitorInfo? _selectedHdtvMonitor;
     [ObservableProperty] private MonitorInfo? _selectedDesktopPrimaryMonitor;
 
-    // Audio
-    public ObservableCollection<AudioEndpointInfo> AvailableEndpoints { get; } = new();
-    [ObservableProperty] private AudioEndpointInfo? _selectedHdtvAudioEndpoint;
-    [ObservableProperty] private AudioEndpointInfo? _selectedDesktopAudioEndpoint;
-    [ObservableProperty] private string? _autoDetectedHdtvAudioName;
-    [ObservableProperty] private string? _autoDetectedDesktopAudioName;
+    // Audio — endpoints are auto-detected from the selected monitor; shown as read-only labels
+    [ObservableProperty] private string _hdtvAudioLabel    = "Not detected";
+    [ObservableProperty] private string _desktopAudioLabel = "Not detected";
     [ObservableProperty] private bool _audioSwitchingEnabled;
     [ObservableProperty] private bool _respectManualAudioOverride;
 
@@ -855,6 +843,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _idleTimeoutSeconds;
     [ObservableProperty] private int _desktopDwellSeconds;
     [ObservableProperty] private int _hdtvDwellSeconds;
+    [ObservableProperty] private int _elevatedHdtvDwellSeconds;
     [ObservableProperty] private int _mouseDwellSeconds;
     [ObservableProperty] private int _pollIntervalSeconds;
     [ObservableProperty] private int _elevatedPollIntervalSeconds;
@@ -905,9 +894,11 @@ public sealed class SwitcherStateToStringConverter : IValueConverter
 ```csharp
 namespace DefaultMonitorSwitcher;
 
-internal static class AppBootstrapper
+internal sealed class AppBootstrapper
 {
-    internal static ServiceProvider BuildServiceProvider()
+    private ServiceProvider? _services;
+
+    public void Start()
     {
         var services = new ServiceCollection();
 
@@ -923,15 +914,16 @@ internal static class AppBootstrapper
         services.AddSingleton<INotificationService,  NotificationService>();
         services.AddSingleton<IStartupService,       StartupService>();
 
-        // UI
+        // UI — SettingsViewModel via factory func to avoid circular DI
         services.AddSingleton<TrayIconViewModel>();
-        services.AddTransient<SettingsViewModel>();  // fresh snapshot on each Settings open
+        services.AddTransient<SettingsViewModel>();
+        services.AddSingleton<Func<SettingsViewModel>>(
+            sp => () => sp.GetRequiredService<SettingsViewModel>());
 
-        // WPF Dispatcher — allows infrastructure/services to marshal to UI thread
-        // without a direct dependency on System.Windows.Application
-        services.AddSingleton(_ => System.Windows.Application.Current.Dispatcher);
+        _services = services.BuildServiceProvider();
 
-        return services.BuildServiceProvider();
+        // Initialise config, wire up tray icon, start controller
+        // (see AppBootstrapper.cs for full wiring details)
     }
 }
 ```
