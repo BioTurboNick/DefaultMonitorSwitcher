@@ -31,6 +31,7 @@ public sealed class NotificationService : INotificationService
             (SwitchDirection.Revert,  SwitchReason.IdleTimeout)              => "No HDTV activity — reverting to desktop.",
             (SwitchDirection.Revert,  SwitchReason.ExclusiveDesktopActivity) => "Activity returned to desk monitors.",
             (SwitchDirection.Revert,  SwitchReason.SessionEnding)            => "Session ending — reverting to desktop.",
+            (SwitchDirection.Revert,  SwitchReason.SessionLocked)            => "Workstation locked — reverting to desktop.",
             (SwitchDirection.Revert,  SwitchReason.Startup)                  => "HDTV was primary at startup — reverting.",
             (SwitchDirection.Revert,  SwitchReason.Manual)                   => "Manually reverted to desktop.",
             (SwitchDirection.Forward, SwitchReason.ExclusiveHdtvActivity)    => "Exclusive HDTV activity detected.",

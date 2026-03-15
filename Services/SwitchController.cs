@@ -1,4 +1,5 @@
 using DefaultMonitorSwitcher.Core;
+using Microsoft.Win32;
 
 namespace DefaultMonitorSwitcher.Services;
 
@@ -78,6 +79,7 @@ public sealed class SwitchController : ISwitchController
         _activity.SampleProduced        += OnSampleProduced;
         _windowEvents.WindowMovedToHdtv += OnWindowMovedToHdtv;
         _config.ConfigurationChanged    += OnConfigurationChanged;
+        SystemEvents.SessionSwitch      += OnSessionSwitch;
 
         // Start window hook if HDTV monitor is configured
         if (cfg.HdtvDisplayDevicePath != null)
@@ -411,8 +413,19 @@ public sealed class SwitchController : ISwitchController
 
     // ── IDisposable ───────────────────────────────────────────────────────────
 
+    // ── Session lock ──────────────────────────────────────────────────────────
+
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason == SessionSwitchReason.SessionLock)
+            Task.Run(() => RevertNow(SwitchReason.SessionLocked));
+    }
+
+    // ── IDisposable ───────────────────────────────────────────────────────────
+
     public void Dispose()
     {
+        SystemEvents.SessionSwitch      -= OnSessionSwitch;
         _activity.SampleProduced        -= OnSampleProduced;
         _windowEvents.WindowMovedToHdtv -= OnWindowMovedToHdtv;
         _config.ConfigurationChanged    -= OnConfigurationChanged;

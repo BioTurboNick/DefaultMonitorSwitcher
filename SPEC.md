@@ -134,9 +134,25 @@ desktop) or a **forward switch** (desktop → HDTV).
 - **No primary change needed**: If the HDTV is not currently the primary monitor
   when the session ends, no action is taken.
 
+### 5.3a Workstation Lock Revert
+
+- **Trigger**: The user locks the workstation (Win+L, screen lock timeout, or fast user switching)
+- **Rationale**: When the workstation is locked, the lock screen is displayed on the primary
+  monitor. If the HDTV is primary, the lock screen (and any subsequent unlock prompt) appears
+  on the TV rather than on the desk monitor — the exact problem this application exists to prevent.
+  Waiting for the idle timeout (up to 5+ minutes) is too slow; the revert should be immediate.
+- **Mechanism**: The application subscribes to `SystemEvents.SessionSwitch`. On
+  `SessionSwitchReason.SessionLock`, an immediate synchronous revert is performed off the
+  event callback thread via `Task.Run`. The activity sampler also treats a locked session as
+  `ActivityZone.None` so the state machine cannot accumulate HDTV dwell while locked and
+  accidentally re-trigger a forward switch on unlock.
+- **TV-Show Mode interaction**: The workstation-lock revert fires regardless of TV-Show Mode.
+- **No primary change needed**: If the HDTV is not currently the primary monitor when the
+  workstation is locked, no action is taken.
+
 ### 5.4 Audio Device Switching on Revert
 
-When a revert occurs (from any condition in 5.1–5.3), the app also switches the
+When a revert occurs (from any condition in 5.1–5.3a), the app also switches the
 Windows default audio playback device from the HDTV audio device to the
 desktop audio device.
 
@@ -345,6 +361,7 @@ display was unavailable).
   - *"Switched to desktop — no HDTV activity for 5 minutes"*
   - *"Switched to desktop — activity returned to desk monitors"*
   - *"Switched to desktop — session ending"*
+  - *"Switched to desktop — workstation locked"*
   - *"Could not switch audio — HDTV audio device not found"*
 - **Opt-out**: Toast notifications can be disabled via OS notification settings
   for the app; the app does not provide a separate toggle for this.
@@ -377,6 +394,7 @@ A minimal settings window allowing the user to:
 | Moving a window from a desktop monitor to the TV | Triggers elevated polling (5.8); also attributes activity to the TV for the forward-switch dwell check if mouse/focus follow |
 | Win+Shift+Arrow cycling a window through the HDTV | Triggers elevated polling but cannot alone satisfy the 5.7 exclusivity condition; dwell resets if focus returns to desktop |
 | System wakes from sleep | App re-evaluates display topology and current primary on wake event before resuming polling |
+| Workstation is locked while HDTV is primary | Immediate revert fires (see §5.3a); lock screen appears on the desk monitor |
 | System logs out, shuts down, or restarts while HDTV is primary | Session-ending revert fires synchronously before the process exits (see Section 5.3) |
 | Session-ending revert call exceeds Windows shutdown time budget | Revert may not complete; Windows force-terminates the app. This is a best-effort operation. |
 | Computer loses power while HDTV is primary | No shutdown hook fires; the display configuration is persisted by Windows as-is. On next boot the app will be running but the HDTV may still be primary. As a mitigation, the app checks on startup whether the HDTV is currently the primary monitor and, if so, performs an immediate revert before entering normal polling. |

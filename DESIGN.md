@@ -93,6 +93,7 @@ public enum SwitchReason
     IdleTimeout,
     ExclusiveDesktopActivity,
     SessionEnding,
+    SessionLocked,
     Startup,
     Manual,
     ExclusiveHdtvActivity,
@@ -379,6 +380,7 @@ public sealed class ActivityTracker : IActivityTracker
     private Task _loopTask;
     private CancellationTokenSource _cts;
     private DateTimeOffset? _elevatedExpiry;           // null = not elevated
+    private volatile bool   _isLocked;                 // set via SystemEvents.SessionSwitch; suppresses activity while locked
     private readonly Lock _elevatedLock = new();
     private readonly Dictionary<string, DateTimeOffset> _cursorZoneEntry = new(); // DevicePath → entry time
     private async Task PollLoopAsync(CancellationToken ct);
@@ -426,6 +428,7 @@ public sealed class SwitchController : ISwitchController
     private void OnSampleProduced(object? sender, ActivitySample sample);   // background thread
     private void OnWindowMovedToHdtv(object? sender, EventArgs e);          // UI thread
     private void OnConfigurationChanged(object? sender, AppConfiguration cfg); // restarts window hook
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e);  // immediate revert on SessionLock (§5.3a)
     private SwitchResult SwitchAudio(string? targetDeviceId, AppConfiguration cfg);
     private static string? ResolveDesktopDisplayPath(AppConfiguration cfg, IReadOnlyList<MonitorInfo> monitors);
     private string? ResolveDesktopAudioId(AppConfiguration cfg, string targetPath, IReadOnlyList<MonitorInfo> monitors);

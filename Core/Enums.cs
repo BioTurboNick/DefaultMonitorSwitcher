@@ -18,6 +18,7 @@ public enum SwitchReason
     IdleTimeout,
     ExclusiveDesktopActivity,
     SessionEnding,
+    SessionLocked,
     Startup,
     Manual,
     ExclusiveHdtvActivity,
