@@ -1,4 +1,5 @@
 using DefaultMonitorSwitcher.Core;
+using Microsoft.Win32;
 using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Gdi;
@@ -22,10 +23,22 @@ public sealed class ActivityTracker : IActivityTracker
     private readonly Dictionary<string, DateTimeOffset> _cursorZoneEntry = new();
     private string? _currentCursorDevicePath;
 
+    // Session lock state — set from SystemEvents, read from poll thread
+    private volatile bool _isLocked;
+
     public ActivityTracker(IDisplayService displayService, IConfigurationService configService)
     {
         _displayService = displayService;
         _configService  = configService;
+        SystemEvents.SessionSwitch += OnSessionSwitch;
+    }
+
+    private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason == SessionSwitchReason.SessionLock)
+            _isLocked = true;
+        else if (e.Reason == SessionSwitchReason.SessionUnlock)
+            _isLocked = false;
     }
 
     public event EventHandler<ActivitySample>? SampleProduced;
@@ -63,7 +76,11 @@ public sealed class ActivityTracker : IActivityTracker
         _loopTask = null;
     }
 
-    public void Dispose() => Stop();
+    public void Dispose()
+    {
+        SystemEvents.SessionSwitch -= OnSessionSwitch;
+        Stop();
+    }
 
     // ── Internal ─────────────────────────────────────────────────────────────
 
@@ -138,6 +155,9 @@ public sealed class ActivityTracker : IActivityTracker
         AppConfiguration cfg,
         DateTimeOffset now)
     {
+        if (_isLocked)
+            return ActivityZone.None;
+
         if (!PInvoke.GetCursorPos(out var pt))
             return ActivityZone.None;
 
@@ -176,6 +196,9 @@ public sealed class ActivityTracker : IActivityTracker
 
     private ActivityZone GetForegroundWindowZone(IReadOnlyList<MonitorInfo> monitors)
     {
+        if (_isLocked)
+            return ActivityZone.None;
+
         var hwnd = PInvoke.GetForegroundWindow();
         if (hwnd == default)
             return ActivityZone.None;
