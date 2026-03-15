@@ -136,19 +136,26 @@ public sealed class SwitchController : ISwitchController
 
     public SwitchResult RevertNow(SwitchReason reason)
     {
+        App.Log($"RevertNow: reason={reason}");
         var cfg = _config.Current;
 
         if (cfg.PreferredPrimaryDisplayDevicePath == null)
+        {
+            App.Log("RevertNow: no preferred primary configured");
             return SwitchResult.DisplayNotFound;
+        }
 
         var activeMonitors = _display.GetActiveMonitors();
+        App.Log($"RevertNow: activeMonitors={activeMonitors.Count}");
 
         // No-op if the desktop monitor is already primary
         string? primary = _display.GetPrimaryMonitorDevicePath();
+        App.Log($"RevertNow: currentPrimary={primary?[^20..]}");
         if (primary != null && primary.Equals(
                 cfg.PreferredPrimaryDisplayDevicePath, StringComparison.OrdinalIgnoreCase))
         {
             SetState(SwitcherState.DesktopIdle);
+            App.Log("RevertNow: already desktop primary, no-op");
             return SwitchResult.NoActionNeeded;
         }
 
@@ -156,11 +163,14 @@ public sealed class SwitchController : ISwitchController
         string? targetPath = ResolveDesktopDisplayPath(cfg, activeMonitors);
         if (targetPath == null)
         {
+            App.Log("RevertNow: no desktop monitor found");
             _notifications.ShowWarning("Cannot revert: no desktop monitor is connected.");
             return SwitchResult.DisplayNotFound;
         }
 
+        App.Log($"RevertNow: calling TrySetPrimaryMonitor target={targetPath[^20..]}");
         bool ok = _display.TrySetPrimaryMonitor(targetPath, out string? displayErr);
+        App.Log($"RevertNow: TrySetPrimaryMonitor ok={ok} err={displayErr}");
         if (!ok)
         {
             var r = SwitchResult.Failed;
@@ -411,14 +421,36 @@ public sealed class SwitchController : ISwitchController
     private void RaiseSwitchCompleted(SwitchDirection dir, SwitchReason reason, SwitchResult result) =>
         SwitchCompleted?.Invoke(this, (dir, reason, result));
 
-    // ── IDisposable ───────────────────────────────────────────────────────────
-
     // ── Session lock ──────────────────────────────────────────────────────────
+
+    // SetDisplayConfig returns ERROR_ACCESS_DENIED (5) while the secure desktop
+    // is active, so we defer the revert until the session is unlocked.
+    private volatile bool _revertPendingAfterUnlock;
 
     private void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
     {
+        App.Log($"SessionSwitch: {e.Reason}");
+
         if (e.Reason == SessionSwitchReason.SessionLock)
-            Task.Run(() => RevertNow(SwitchReason.SessionLocked));
+        {
+            string? primary = _display.GetPrimaryMonitorDevicePath();
+            var cfg = _config.Current;
+            if (primary != null && cfg.HdtvDisplayDevicePath != null &&
+                primary.Equals(cfg.HdtvDisplayDevicePath, StringComparison.OrdinalIgnoreCase))
+            {
+                App.Log("SessionLock: HDTV is primary — deferring revert to unlock");
+                _revertPendingAfterUnlock = true;
+            }
+        }
+        else if (e.Reason == SessionSwitchReason.SessionUnlock)
+        {
+            if (_revertPendingAfterUnlock)
+            {
+                _revertPendingAfterUnlock = false;
+                App.Log("SessionUnlock: executing deferred revert");
+                Task.Run(() => RevertNow(SwitchReason.SessionLocked));
+            }
+        }
     }
 
     // ── IDisposable ───────────────────────────────────────────────────────────

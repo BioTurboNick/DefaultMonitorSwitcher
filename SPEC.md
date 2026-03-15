@@ -140,12 +140,17 @@ desktop) or a **forward switch** (desktop → HDTV).
 - **Rationale**: When the workstation is locked, the lock screen is displayed on the primary
   monitor. If the HDTV is primary, the lock screen (and any subsequent unlock prompt) appears
   on the TV rather than on the desk monitor — the exact problem this application exists to prevent.
-  Waiting for the idle timeout (up to 5+ minutes) is too slow; the revert should be immediate.
-- **Mechanism**: The application subscribes to `SystemEvents.SessionSwitch`. On
-  `SessionSwitchReason.SessionLock`, an immediate synchronous revert is performed off the
-  event callback thread via `Task.Run`. The activity sampler also treats a locked session as
-  `ActivityZone.None` so the state machine cannot accumulate HDTV dwell while locked and
-  accidentally re-trigger a forward switch on unlock.
+  Waiting for the idle timeout (up to 5+ minutes) is too slow; the revert should happen on unlock.
+- **Mechanism**: The application subscribes to `SystemEvents.SessionSwitch`.
+  - On `SessionSwitchReason.SessionLock`: if the HDTV is currently the primary monitor, a
+    deferred-revert flag is set. No display call is made at lock time because Windows returns
+    `ERROR_ACCESS_DENIED` (5) from `SetDisplayConfig` while the secure desktop is active.
+  - On `SessionSwitchReason.SessionUnlock`: if the deferred flag is set, an immediate revert
+    is performed via `Task.Run`. The display switch completes before the user's session is
+    visible. The activity sampler also treats a locked session as `ActivityZone.None` so the
+    state machine cannot accumulate HDTV dwell while locked.
+- **Current limitation**: The lock screen itself will still appear on the HDTV for the duration
+  of the lock. The revert fires on unlock, not at lock time. See §11 for the planned improvement.
 - **TV-Show Mode interaction**: The workstation-lock revert fires regardless of TV-Show Mode.
 - **No primary change needed**: If the HDTV is not currently the primary monitor when the
   workstation is locked, no action is taken.
@@ -394,7 +399,7 @@ A minimal settings window allowing the user to:
 | Moving a window from a desktop monitor to the TV | Triggers elevated polling (5.8); also attributes activity to the TV for the forward-switch dwell check if mouse/focus follow |
 | Win+Shift+Arrow cycling a window through the HDTV | Triggers elevated polling but cannot alone satisfy the 5.7 exclusivity condition; dwell resets if focus returns to desktop |
 | System wakes from sleep | App re-evaluates display topology and current primary on wake event before resuming polling |
-| Workstation is locked while HDTV is primary | Immediate revert fires (see §5.3a); lock screen appears on the desk monitor |
+| Workstation is locked while HDTV is primary | Deferred revert fires on unlock (see §5.3a); lock screen remains on HDTV during the lock |
 | System logs out, shuts down, or restarts while HDTV is primary | Session-ending revert fires synchronously before the process exits (see Section 5.3) |
 | Session-ending revert call exceeds Windows shutdown time budget | Revert may not complete; Windows force-terminates the app. This is a best-effort operation. |
 | Computer loses power while HDTV is primary | No shutdown hook fires; the display configuration is persisted by Windows as-is. On next boot the app will be running but the HDTV may still be primary. As a mitigation, the app checks on startup whether the HDTV is currently the primary monitor and, if so, performs an immediate revert before entering normal polling. |
@@ -420,3 +425,27 @@ A minimal settings window allowing the user to:
 1. Should there be a "gaming session start" detection path (separate spec) that
    also switches the primary monitor and audio device *to* the HDTV, and
    re-applies stored window positions?
+
+---
+
+## 12. Future Features
+
+### 12.1 Lock-Screen Revert via Windows Service
+
+The current §5.3a implementation defers the revert to unlock because
+`SetDisplayConfig` returns `ERROR_ACCESS_DENIED` while the secure desktop is
+active. To make the lock screen appear on the desk monitor immediately, the
+display-switching logic would need to run in a process that has access to the
+display hardware regardless of desktop state — specifically a Windows Service
+running as `LocalSystem`.
+
+**Architecture**: A `LocalSystem` background service would own the
+`SwitchController` and all display calls. The existing tray application would
+become a thin client communicating with the service over a named pipe: forwarding
+activity samples, sending manual switch commands, and receiving state/notification
+callbacks. Audio switching would remain in the user-session process (the
+`PolicyConfig` COM interface requires user-session context).
+
+**Scope**: New `DefaultMonitorSwitcher.Service` project, a shared IPC protocol
+layer, refactored `AppBootstrapper`, and installer changes to register and manage
+the service. Estimated ~400–600 lines net new/changed across two new projects.
