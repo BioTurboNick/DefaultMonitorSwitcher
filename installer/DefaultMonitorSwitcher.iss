@@ -1,5 +1,5 @@
 #define AppName      "DefaultMonitorSwitcher"
-#define AppVersion   "1.0.0"
+#define AppVersion   "1.1.0"
 #define AppPublisher "Nicholas"
 #define AppExeName   "DefaultMonitorSwitcher.exe"
 #define SourceDir    "..\publish"
@@ -21,6 +21,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
+UsedUserAreasWarning=no
 UninstallDisplayIcon={app}\{#AppExeName}
 UninstallDisplayName={#AppName}
 MinVersion=10.0.17763

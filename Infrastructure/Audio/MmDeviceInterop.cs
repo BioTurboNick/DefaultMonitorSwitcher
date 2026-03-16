@@ -107,3 +107,16 @@ internal static class PropertyKeys
         pid   = 14
     };
 }
+
+// IAudioMeterInformation — used to detect active audio output on a specific endpoint.
+// IID: {C02216F6-8C67-4B5B-9D00-D008E73E0064}
+[ComImport]
+[Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioMeterInformation
+{
+    [PreserveSig] int GetPeakValue(out float pfPeak);
+    [PreserveSig] int GetMeteringChannelCount(out uint pnChannelCount);
+    [PreserveSig] int GetChannelsPeakValues(uint u32ChannelCount, [Out] float[] afPeakValues);
+    [PreserveSig] int QueryHardwareSupport(out uint pdwHardwareSupportMask);
+}

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using DefaultMonitorSwitcher.Core;
 using Microsoft.Win32;
 
@@ -38,6 +39,11 @@ public sealed class SwitchController : ISwitchController
 
     // Last audio device ID we set (for RespectManualAudioOverride logic)
     private string? _lastSetAudioId;
+
+    // Set after an idle revert: suppresses forward switching driven by foreground-window
+    // zone alone. Cleared only when the cursor physically enters the HDTV zone, ensuring
+    // the user must make a deliberate mouse move before the app switches again.
+    private bool _requireCursorForForwardSwitch;
 
     // ── ISwitchController ─────────────────────────────────────────────────────
 
@@ -116,6 +122,7 @@ public sealed class SwitchController : ISwitchController
         if (cfg.HdtvDisplayDevicePath == null)
             return SwitchResult.DisplayNotFound;
 
+        _requireCursorForForwardSwitch = false;
         bool ok = _display.TrySetPrimaryMonitor(cfg.HdtvDisplayDevicePath, out string? displayErr);
         if (!ok)
         {
@@ -208,8 +215,12 @@ public sealed class SwitchController : ISwitchController
             {
                 // ── Desktop: waiting for HDTV activity ────────────────────────
                 case SwitcherState.DesktopIdle:
-                    if (zone == ActivityZone.Hdtv)
+                    // After an idle revert, require a deliberate cursor move to the HDTV
+                    // rather than responding to the foreground window still being there.
+                    var forwardZone = _requireCursorForForwardSwitch ? sample.CursorZone : zone;
+                    if (forwardZone == ActivityZone.Hdtv)
                     {
+                        _requireCursorForForwardSwitch = false;
                         _dwellStart = now;
                         toState = SwitcherState.DesktopHdtvDwelling;
                     }
@@ -230,15 +241,42 @@ public sealed class SwitchController : ISwitchController
 
                 // ── HDTV is primary: track activity, watch for idle / desktop ──
                 case SwitcherState.HdtvActive:
-                    if (zone != ActivityZone.None)
+                    if (cfg.HdtvEngagementDetectionEnabled)
                     {
-                        _dwellStart = now; // last-seen-activity timestamp
+                        // §5.1 engagement mode: idle is declared when system input has been
+                        // idle for >= IdleTimeoutSeconds AND neither engagement signal is active.
+                        var inputIdleSecs = GetMouseIdleSeconds(now);
+                        // Log every 5 s to avoid flooding the log file.
+                        if ((int)inputIdleSecs % 5 == 0)
+                            App.Log($"HdtvActive: mouseIdle={inputIdleSecs:F1}s threshold={cfg.IdleTimeoutSeconds}s engaged={sample.IsHdtvEngaged} tvShow={tvShow} zone={zone}");
+                        if (inputIdleSecs < cfg.IdleTimeoutSeconds || sample.IsHdtvEngaged)
+                        {
+                            // User is present or something is actively running — stay active.
+                            _dwellStart = now;
+                        }
+                        else if (!tvShow)
+                        {
+                            App.Log("HdtvActive: idle threshold reached — entering HdtvIdleCountdown");
+                            _dwellStart = now; // countdown start
+                            toState = SwitcherState.HdtvIdleCountdown;
+                        }
+                        else
+                        {
+                            App.Log("HdtvActive: idle threshold reached but TvShowMode is on — suppressed");
+                        }
                     }
-                    else if (!tvShow &&
-                             (now - _dwellStart).TotalSeconds >= cfg.IdleTimeoutSeconds)
+                    else
                     {
-                        _dwellStart = now; // countdown start
-                        toState = SwitcherState.HdtvIdleCountdown;
+                        // §5.1 original zone-based mode.
+                        if (zone != ActivityZone.None)
+                        {
+                            _dwellStart = now;
+                        }
+                        else if (!tvShow && (now - _dwellStart).TotalSeconds >= cfg.IdleTimeoutSeconds)
+                        {
+                            _dwellStart = now;
+                            toState = SwitcherState.HdtvIdleCountdown;
+                        }
                     }
 
                     if (zone == ActivityZone.Desktop)
@@ -250,13 +288,22 @@ public sealed class SwitchController : ISwitchController
 
                 // ── HDTV idle: user has gone quiet, countdown to revert ────────
                 case SwitcherState.HdtvIdleCountdown:
-                    if (zone != ActivityZone.None)
+                    // Cancel the countdown if activity resumes — either user input or
+                    // engagement signals (game resumed, video playing, etc.).
+                    bool cancelCountdown = cfg.HdtvEngagementDetectionEnabled
+                        ? GetMouseIdleSeconds(now) < cfg.IdleTimeoutSeconds || sample.IsHdtvEngaged
+                        : zone != ActivityZone.None;
+
+                    App.Log($"HdtvIdleCountdown: elapsed={(now - _dwellStart).TotalSeconds:F1}s dwell={cfg.DesktopDwellSeconds}s cancel={cancelCountdown}");
+                    if (cancelCountdown)
                     {
                         _dwellStart = now;
                         toState = SwitcherState.HdtvActive;
                     }
                     else if ((now - _dwellStart).TotalSeconds >= cfg.DesktopDwellSeconds)
                     {
+                        App.Log("HdtvIdleCountdown: dwell elapsed — reverting");
+                        _requireCursorForForwardSwitch = true;
                         switchDir    = SwitchDirection.Revert;
                         switchReason = SwitchReason.IdleTimeout;
                     }
@@ -394,6 +441,43 @@ public sealed class SwitchController : ISwitchController
 
         return fallback != null ? _audio.AutoDetectEndpointForMonitor(fallback)?.DeviceId : null;
     }
+
+    // ── Mouse-position idle tracking ──────────────────────────────────────────
+    // Tracks how long the cursor has been stationary. Only mouse movement resets
+    // this counter; keyboard and controller input do not. This makes it immune to
+    // background HID devices (controllers, stream decks, etc.) that continuously
+    // generate system input events and would otherwise keep GetLastInputInfo at 0.
+
+    // These fields are accessed only from OnSampleProduced (single background thread).
+    private System.Drawing.Point _lastCursorPos;
+    private DateTimeOffset _cursorMovedAt = DateTimeOffset.MinValue;
+
+    private double GetMouseIdleSeconds(DateTimeOffset now)
+    {
+        if (!GetCursorPos(out MousePoint pt))
+            return 0;
+
+        var pos = new System.Drawing.Point(pt.X, pt.Y);
+        if (_cursorMovedAt == DateTimeOffset.MinValue)
+        {
+            _lastCursorPos = pos;
+            _cursorMovedAt = now;
+        }
+        else if (pos != _lastCursorPos)
+        {
+            _lastCursorPos = pos;
+            _cursorMovedAt = now;
+        }
+
+        return (now - _cursorMovedAt).TotalSeconds;
+    }
+
+    [DllImport("user32.dll", SetLastError = false)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out MousePoint pt);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MousePoint { public int X, Y; }
 
     // ── Misc helpers ──────────────────────────────────────────────────────────
 

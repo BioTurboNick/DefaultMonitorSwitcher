@@ -1,6 +1,7 @@
 using DefaultMonitorSwitcher.Core;
 using DefaultMonitorSwitcher.Infrastructure.Audio;
 using DefaultMonitorSwitcher.Infrastructure.Display;
+using DefaultMonitorSwitcher.Infrastructure.Engagement;
 using DefaultMonitorSwitcher.Infrastructure.Input;
 using DefaultMonitorSwitcher.Services;
 using DefaultMonitorSwitcher.UI;
@@ -112,6 +113,7 @@ public sealed class AppBootstrapper : IDisposable
         // Infrastructure
         sc.AddSingleton<IDisplayService, DisplayService>();
         sc.AddSingleton<IAudioService,   AudioService>();
+        sc.AddSingleton<IHdtvEngagementDetector, HdtvEngagementDetector>();
         sc.AddSingleton<IWindowEventSource>(sp => new WindowEventSource(
             sp.GetRequiredService<IDisplayService>(),
             System.Windows.Application.Current.Dispatcher));

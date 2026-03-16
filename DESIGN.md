@@ -40,6 +40,8 @@ DefaultMonitorSwitcher/
 │   │   ├── AudioService.cs                   — DefaultMonitorSwitcher.Infrastructure.Audio
 │   │   ├── PolicyConfigInterop.cs            — DefaultMonitorSwitcher.Infrastructure.Audio
 │   │   └── MmDeviceInterop.cs                — DefaultMonitorSwitcher.Infrastructure.Audio
+│   ├── Engagement/
+│   │   └── HdtvEngagementDetector.cs         — DefaultMonitorSwitcher.Infrastructure.Engagement
 │   └── Input/
 │       └── WindowEventSource.cs              — DefaultMonitorSwitcher.Infrastructure.Input
 │
@@ -146,6 +148,11 @@ public sealed record ActivitySample
     public required DateTimeOffset Timestamp            { get; init; }
     public required ActivityZone   CursorZone           { get; init; }
     public required ActivityZone   ForegroundWindowZone { get; init; }
+    /// <summary>
+    /// True if DXGI frame activity or WASAPI audio output was detected on the HDTV
+    /// this tick (see §4.4). Always false when HdtvEngagementDetectionEnabled is false.
+    /// </summary>
+    public required bool           IsHdtvEngaged        { get; init; }
     /// <summary>Effective zone after precedence rules: ForegroundWindow takes priority over Cursor.</summary>
     public ActivityZone EffectiveZone =>
         ForegroundWindowZone != ActivityZone.None ? ForegroundWindowZone : CursorZone;
@@ -174,6 +181,12 @@ public sealed record AppConfiguration
     public int     ElevatedPollIntervalSeconds      { get; init; } = 1;
     public int     ElevatedPollDurationSeconds      { get; init; } = 30;
     public bool    TvShowModeEnabled                { get; init; } = false;
+    /// <summary>
+    /// When true, idle detection uses mouse-cursor position idle (GetCursorPos) +
+    /// DXGI content-frame activity + WASAPI audio peak rather than foreground window
+    /// zone attribution (see §5.1, §4.4).
+    /// </summary>
+    public bool    HdtvEngagementDetectionEnabled   { get; init; } = true;
     public bool    RunOnStartup                     { get; init; } = true;
 }
 ```
@@ -297,6 +310,30 @@ public interface IWindowEventSource : IDisposable
 }
 ```
 
+### `IHdtvEngagementDetector.cs`
+
+```csharp
+namespace DefaultMonitorSwitcher.Core;
+
+public interface IHdtvEngagementDetector : IDisposable
+{
+    /// <summary>
+    /// Samples HDTV engagement for the current poll tick. Returns true if DXGI frame
+    /// activity or a non-zero WASAPI audio peak is detected on the HDTV endpoint.
+    /// Always returns false when HdtvEngagementDetectionEnabled is false.
+    /// Thread-safe; called from the background poll thread.
+    /// </summary>
+    bool IsEngaged();
+
+    /// <summary>
+    /// Updates the HDTV target. Must be called when the HDTV monitor identity or
+    /// audio device ID changes (config save, display topology change).
+    /// Thread-safe.
+    /// </summary>
+    void Configure(MonitorInfo? hdtvMonitor, string? hdtvAudioDeviceId);
+}
+```
+
 ### `ISwitchController.cs`
 
 ```csharp
@@ -367,8 +404,9 @@ namespace DefaultMonitorSwitcher.Services;
 public sealed class ActivityTracker : IActivityTracker
 {
     public ActivityTracker(
-        IDisplayService displayService,
-        IConfigurationService configService);
+        IDisplayService          displayService,
+        IConfigurationService    configService,
+        IHdtvEngagementDetector  engagementDetector);   // calls IsEngaged() each tick; Configure() on config change
 
     public event EventHandler<ActivitySample>? SampleProduced;
     public void ActivateElevatedPolling();   // sets _elevatedExpiry = now + ElevatedPollDurationSeconds
@@ -387,6 +425,8 @@ public sealed class ActivityTracker : IActivityTracker
     private ActivityZone GetCursorZone(IReadOnlyList<MonitorInfo> monitors);      // applies mouse-dwell smoothing
     private ActivityZone GetForegroundWindowZone(IReadOnlyList<MonitorInfo> monitors);
     private static ActivityZone Classify(MonitorInfo? monitor, AppConfiguration cfg);
+    // On ConfigurationChanged: calls _engagementDetector.Configure() if HdtvDisplayDevicePath
+    // or HdtvAudioDeviceId changed.
 }
 ```
 
@@ -425,6 +465,11 @@ public sealed class SwitchController : ISwitchController
     //   HdtvDesktopDwelling  → time we first saw desktop activity
     private DateTimeOffset _dwellStart;
     private string? _lastSetAudioId;             // for RespectManualAudioOverride tracking
+    private bool _requireCursorForForwardSwitch; // set on idle revert; cleared when cursor enters HDTV or on manual forward switch
+    // Mouse-position idle tracking (OnSampleProduced thread only):
+    private System.Drawing.Point _lastCursorPos;
+    private DateTimeOffset _cursorMovedAt;
+    private double GetMouseIdleSeconds(DateTimeOffset now); // calls GetCursorPos, tracks position changes
     private void OnSampleProduced(object? sender, ActivitySample sample);   // background thread
     private void OnWindowMovedToHdtv(object? sender, EventArgs e);          // UI thread
     private void OnConfigurationChanged(object? sender, AppConfiguration cfg); // restarts window hook
@@ -436,16 +481,20 @@ public sealed class SwitchController : ISwitchController
 }
 ```
 
+**Idle detection mode** (`OnSampleProduced`): When `cfg.HdtvEngagementDetectionEnabled` is true, the `HdtvActive → HdtvIdleCountdown` transition is gated on mouse-cursor position being stationary for ≥ `IdleTimeoutSeconds` (tracked via `GetCursorPos` in `GetMouseIdleSeconds`, independent of keyboard/controller input). `sample.IsHdtvEngaged == true` cancels an in-progress `HdtvIdleCountdown` (returns to `HdtvActive`) but does not prevent the countdown from starting. All other state transitions are unchanged regardless of this setting.
+
+**Post-idle-revert guard** (`_requireCursorForForwardSwitch`): Set to `true` when a revert fires due to `IdleTimeout`. While set, the `DesktopIdle → DesktopHdtvDwelling` transition requires `sample.CursorZone == Hdtv` (foreground window zone alone is insufficient). Cleared when the cursor enters the HDTV zone or on a manual `ForwardSwitchNow`. Prevents the ping-pong pattern where a still-focused launcher window on the HDTV immediately re-triggers a forward switch.
+
 **State transition table:**
 
 | From state | Condition | To state |
 |---|---|---|
-| `DesktopIdle` | Sample: EffectiveZone == Hdtv | `DesktopHdtvDwelling` |
+| `DesktopIdle` | Sample: EffectiveZone == Hdtv (or CursorZone == Hdtv if `_requireCursorForForwardSwitch`) | `DesktopHdtvDwelling` |
 | `DesktopHdtvDwelling` | Sample: EffectiveZone == Desktop or None | `DesktopIdle` |
 | `DesktopHdtvDwelling` | now − _dwellStart ≥ HdtvDwellThreshold() | Forward switch → `HdtvActive` |
-| `HdtvActive` | Sample: EffectiveZone == None && elapsed ≥ IdleTimeoutSeconds | `HdtvIdleCountdown` |
+| `HdtvActive` | Mouse stationary ≥ IdleTimeoutSeconds && !IsHdtvEngaged (engagement mode), or EffectiveZone == None && elapsed ≥ IdleTimeoutSeconds (zone mode) | `HdtvIdleCountdown` |
 | `HdtvActive` | Sample: EffectiveZone == Desktop | `HdtvDesktopDwelling` |
-| `HdtvIdleCountdown` | Sample: EffectiveZone != None | `HdtvActive` |
+| `HdtvIdleCountdown` | Mouse moved / IsHdtvEngaged (engagement mode), or EffectiveZone != None (zone mode) | `HdtvActive` |
 | `HdtvIdleCountdown` | now − _dwellStart ≥ DesktopDwellSeconds | Revert → `DesktopIdle` |
 | `HdtvDesktopDwelling` | Sample: EffectiveZone == Hdtv | `HdtvActive` |
 | `HdtvDesktopDwelling` | now − _dwellStart ≥ DesktopDwellSeconds | Revert → `DesktopIdle` |
@@ -550,6 +599,15 @@ WINEVENTPROC
 GetAncestor
 IsWindowVisible
 GetWindowThreadProcessId
+
+# DXGI engagement detection
+CreateDXGIFactory1
+IDXGIFactory1
+IDXGIAdapter
+IDXGIOutput1
+IDXGIOutputDuplication
+DXGI_OUTDUPL_FRAME_INFO
+DXGI_OUTPUT_DESC
 ```
 
 CsWin32 emits these into the `Windows.Win32` namespace hierarchy (e.g.
@@ -724,6 +782,19 @@ internal enum EDataFlow { eRender = 0, eCapture = 1, eAll = 2 }
 
 internal const uint DEVICE_STATE_ACTIVE = 0x00000001;
 internal const uint STGM_READ           = 0x00000000;
+
+// IAudioMeterInformation — used by HdtvEngagementDetector to detect active audio output.
+// IID: {C02216F6-8C67-4B5B-9D00-D008E73E0064}
+[ComImport]
+[Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IAudioMeterInformation
+{
+    void GetPeakValue(out float pfPeak);
+    void GetMeteringChannelCount(out uint pnChannelCount);
+    void GetChannelsPeakValues(uint u32ChannelCount, [Out] float[] afPeakValues);
+    void QueryHardwareSupport(out uint pdwHardwareSupportMask);
+}
 ```
 
 ### `Infrastructure/Audio/AudioService.cs`
@@ -750,6 +821,47 @@ public sealed class AudioService : IAudioService
     //         SetDefaultEndpoint(deviceId, eMultimedia),
     //         SetDefaultEndpoint(deviceId, eCommunications).
     //   Returns false + failureReason on any COMException.
+}
+```
+
+### `Infrastructure/Engagement/HdtvEngagementDetector.cs`
+
+```csharp
+namespace DefaultMonitorSwitcher.Infrastructure.Engagement;
+
+public sealed class HdtvEngagementDetector : IHdtvEngagementDetector
+{
+    public HdtvEngagementDetector(IConfigurationService configService);
+
+    public bool IsEngaged();
+    public void Configure(MonitorInfo? hdtvMonitor, string? hdtvAudioDeviceId);
+    public void Dispose();
+
+    private readonly Lock _lock = new();
+    private MonitorInfo?  _hdtvMonitor;
+    private string?       _hdtvAudioDeviceId;
+
+    // DXGI — frame activity detection
+    private IDXGIOutputDuplication? _duplication;
+    private bool CheckDxgiFrameActivity();
+    // Enumerates IDXGIFactory1 → IDXGIAdapter → IDXGIOutput1.
+    // Matches DXGI_OUTPUT_DESC.DesktopCoordinates against _hdtvMonitor.Bounds to
+    // locate the correct output. Calls DuplicateOutput() to create _duplication.
+    // AcquireNextFrame(0, ...) returns S_OK on new frame; checks
+    // DXGI_OUTDUPL_FRAME_INFO.LastPresentTime != 0 to confirm desktop content was
+    // updated (filters cursor-only updates which leave LastPresentTime == 0).
+    // Releases immediately via ReleaseFrame(). On DXGI_ERROR_ACCESS_LOST, nulls
+    // _duplication for lazy recreation on the next tick. Returns false (never throws)
+    // on any failure.
+    private void EnsureDuplication();
+
+    // Audio — peak meter detection
+    private IAudioMeterInformation? _meter;
+    private bool CheckAudioActivity();
+    // Gets IMMDevice for _hdtvAudioDeviceId, activates IAudioMeterInformation via
+    // IMMDevice.Activate(IID_IAudioMeterInformation). Calls GetPeakValue(); returns
+    // true if peak > 0f. Returns false (never throws) if device not found or COM error.
+    private void EnsureAudioMeter();
 }
 ```
 
@@ -908,6 +1020,7 @@ internal sealed class AppBootstrapper
         // Infrastructure
         services.AddSingleton<IDisplayService, DisplayService>();
         services.AddSingleton<IAudioService,   AudioService>();
+        services.AddSingleton<IHdtvEngagementDetector, HdtvEngagementDetector>();
         services.AddSingleton<IWindowEventSource, WindowEventSource>();
 
         // Services
@@ -996,6 +1109,7 @@ public partial class App : Application
 | `IDisplayService` | `DisplayService` | Singleton | Stateless Win32 calls; no benefit to multiple instances |
 | `IAudioService` | `AudioService` | Singleton | Stateless COM calls |
 | `IWindowEventSource` | `WindowEventSource` | Singleton | Single WinEventHook per process |
+| `IHdtvEngagementDetector` | `HdtvEngagementDetector` | Singleton | Single DXGI duplication handle and audio meter per process |
 | `IActivityTracker` | `ActivityTracker` | Singleton | Single polling loop |
 | `ISwitchController` | `SwitchController` | Singleton | Owns the state machine |
 | `INotificationService` | `NotificationService` | Singleton | Stateless toast calls |

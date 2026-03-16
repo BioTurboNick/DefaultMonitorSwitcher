@@ -84,6 +84,27 @@ The two desktop monitors are treated as a single logical zone. Activity on eithe
 desktop monitor is equivalent — the distinction between them only matters for
 selecting which one is primary (see Section 6).
 
+### 4.4 HDTV Engagement Detection
+
+When `hdtvEngagementDetectionEnabled` is true, two supplemental signals are sampled
+on each poll tick to determine whether the HDTV is actively in use beyond mere
+window presence:
+
+1. **DXGI frame activity** — The app creates an `IDXGIOutputDuplication` on the
+   HDTV's DXGI output and calls `AcquireNextFrame` with a zero timeout. A result
+   of S_OK indicates a new composed frame was available; the `LastPresentTime`
+   field of `DXGI_OUTDUPL_FRAME_INFO` is checked to confirm desktop *content* was
+   updated (non-zero), filtering out cursor-only updates which set only
+   `LastMouseUpdateTime`. This signal does not apply to exclusive full-screen
+   OpenGL applications, which bypass DWM's composition pipeline.
+
+2. **WASAPI audio peak** — `IAudioMeterInformation::GetPeakValue()` is called on the
+   HDTV's audio endpoint. A non-zero peak level indicates audio is actively being
+   output to the HDTV. This signal is independent of rendering API.
+
+Either signal independently marks the HDTV as **engaged**. The engagement state is
+evaluated inside each poll tick and factors into the idle timeout condition (§5.1).
+
 ---
 
 ## 5. Switch Conditions
@@ -93,12 +114,38 @@ desktop) or a **forward switch** (desktop → HDTV).
 
 ### 5.1 HDTV Idle Timeout
 
-- **Trigger**: No activity (by the rules in Section 4) has been attributed to the
-  HDTV for a continuous duration exceeding the **idle timeout**
 - **Default idle timeout**: 5 minutes
 - **Configurable range**: 1 minute to 60 minutes
-- **Rationale**: Covers the normal end-of-session scenario where the user stops
-  gaming and the TV switches away from the PC input, cutting off visible activity
+
+#### When `hdtvEngagementDetectionEnabled` is true (default)
+
+- **Trigger**: The mouse cursor has not moved for a continuous duration exceeding
+  the **idle timeout**, **and** the HDTV engagement signals (§4.4) are both
+  inactive (no new DXGI content frames, zero audio peak) throughout that window.
+- **Idle signal**: Mouse-cursor position is polled each tick via `GetCursorPos`.
+  If the position is unchanged since the previous tick, the stationary duration
+  accumulates. Any cursor movement resets the accumulator. Keyboard input,
+  controller activity, and other HID events do not affect this counter, making
+  idle detection robust to background devices that generate continuous system
+  input events (e.g. game controllers keeping `GetLastInputInfo` at zero).
+- **Engagement hold-off**: If either engagement signal becomes active during an
+  idle countdown (§HdtvIdleCountdown), the countdown is cancelled and the state
+  returns to `HdtvActive`. A game actively rendering or playing audio to the
+  HDTV will not trigger a revert even if the mouse has been stationary.
+- **Rationale**: Foreground window location alone cannot distinguish "user is at
+  the TV" from "a launcher has focus on the TV after the user walked away."
+  Mouse-position idle is a reliable, hardware-agnostic signal for user presence.
+  The engagement signals guard against reverting while a game or video is
+  genuinely running.
+
+#### When `hdtvEngagementDetectionEnabled` is false
+
+- **Trigger**: No activity (by the zone-attribution rules in §4.1–4.2) has been
+  attributed to the HDTV for a continuous duration exceeding the **idle timeout**.
+  This is the original behavior.
+- **Rationale**: Fallback for users who prefer the simpler zone-based detection or
+  encounter issues with DXGI duplication (e.g., always-on exclusive full-screen
+  OpenGL setups).
 
 ### 5.2 Exclusive Desktop Activity (Early Revert)
 
@@ -228,6 +275,14 @@ desktop monitor while the HDTV remains primary. When this mode is active:
 - **Trigger**: Activity (by the rules in Section 4) has been attributed
   exclusively to the HDTV for a continuous duration exceeding the **HDTV dwell
   threshold**, while a desktop monitor is currently the primary display
+- **Post-idle-revert guard**: After an idle-timeout revert (§5.1), the forward
+  switch is suppressed until the cursor physically enters the HDTV zone
+  (`CursorZone == Hdtv`). Foreground window zone alone (e.g. a launcher still
+  focused on the HDTV) is insufficient. This prevents the ping-pong pattern where
+  an idle revert is immediately reversed by the still-present launcher window.
+  The guard is lifted as soon as the cursor dwells on the HDTV for `mouseDwellSeconds`,
+  after which normal dwell-based switching resumes. A manual forward switch via
+  the tray menu bypasses this guard.
 - **Default HDTV dwell threshold**: 60 seconds
 - **Configurable range**: 15 seconds to 10 minutes
 - **Exclusivity requirement**: A single attributed activity event on a desktop
@@ -323,6 +378,7 @@ application's data directory.
 | `elevatedPollIntervalSeconds` | int | 1 | Poll interval (seconds) during the elevated window after a window-move event to the HDTV |
 | `elevatedPollDurationSeconds` | int | 30 | How long elevated polling remains active after the last window-move event to the HDTV |
 | `tvShowModeEnabled` | bool | false | Suppresses automatic reverts (5.1 and 5.2) when true |
+| `hdtvEngagementDetectionEnabled` | bool | true | When true, idle detection (§5.1) uses mouse-cursor position idle (via `GetCursorPos` position tracking) supplemented by DXGI content-frame activity and WASAPI audio peak on the HDTV, rather than foreground window zone attribution. Disable to revert to the original zone-based idle detection. |
 | `runOnStartup` | bool | true | Register the application to run on Windows login |
 
 ---

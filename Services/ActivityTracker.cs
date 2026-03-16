@@ -8,8 +8,9 @@ namespace DefaultMonitorSwitcher.Services;
 
 public sealed class ActivityTracker : IActivityTracker
 {
-    private readonly IDisplayService _displayService;
-    private readonly IConfigurationService _configService;
+    private readonly IDisplayService         _displayService;
+    private readonly IConfigurationService   _configService;
+    private readonly IHdtvEngagementDetector _engagementDetector;
 
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
@@ -26,10 +27,14 @@ public sealed class ActivityTracker : IActivityTracker
     // Session lock state — set from SystemEvents, read from poll thread
     private volatile bool _isLocked;
 
-    public ActivityTracker(IDisplayService displayService, IConfigurationService configService)
+    public ActivityTracker(
+        IDisplayService         displayService,
+        IConfigurationService   configService,
+        IHdtvEngagementDetector engagementDetector)
     {
-        _displayService = displayService;
-        _configService  = configService;
+        _displayService     = displayService;
+        _configService      = configService;
+        _engagementDetector = engagementDetector;
         SystemEvents.SessionSwitch += OnSessionSwitch;
     }
 
@@ -55,7 +60,6 @@ public sealed class ActivityTracker : IActivityTracker
             var cfg = _configService.Current;
             _elevatedExpiry = DateTimeOffset.UtcNow.AddSeconds(cfg.ElevatedPollDurationSeconds);
         }
-        // Restart the loop so the new interval takes effect immediately
         RestartLoop();
     }
 
@@ -63,16 +67,23 @@ public sealed class ActivityTracker : IActivityTracker
     {
         if (_loopTask != null)
             return;
-        _cts = new CancellationTokenSource();
+
+        // Configure engagement detector with the current HDTV monitor, and keep it
+        // up to date when configuration changes.
+        ConfigureEngagementDetector(_configService.Current);
+        _configService.ConfigurationChanged += OnConfigurationChanged;
+
+        _cts      = new CancellationTokenSource();
         _loopTask = Task.Run(() => PollLoopAsync(_cts.Token));
     }
 
     public void Stop()
     {
+        _configService.ConfigurationChanged -= OnConfigurationChanged;
         _cts?.Cancel();
         _loopTask?.Wait(TimeSpan.FromSeconds(3));
         _cts?.Dispose();
-        _cts = null;
+        _cts      = null;
         _loopTask = null;
     }
 
@@ -84,6 +95,19 @@ public sealed class ActivityTracker : IActivityTracker
 
     // ── Internal ─────────────────────────────────────────────────────────────
 
+    private void OnConfigurationChanged(object? sender, AppConfiguration cfg)
+        => ConfigureEngagementDetector(cfg);
+
+    private void ConfigureEngagementDetector(AppConfiguration cfg)
+    {
+        var hdtvMonitor = cfg.HdtvDisplayDevicePath == null ? null :
+            _displayService.GetActiveMonitors()
+                .FirstOrDefault(m => m.DevicePath.Equals(
+                    cfg.HdtvDisplayDevicePath, StringComparison.OrdinalIgnoreCase));
+
+        _engagementDetector.Configure(hdtvMonitor, cfg.HdtvAudioDeviceId);
+    }
+
     private void RestartLoop()
     {
         if (_cts == null)
@@ -91,7 +115,7 @@ public sealed class ActivityTracker : IActivityTracker
         _cts.Cancel();
         _loopTask?.Wait(TimeSpan.FromSeconds(3));
         _cts.Dispose();
-        _cts = new CancellationTokenSource();
+        _cts      = new CancellationTokenSource();
         _loopTask = Task.Run(() => PollLoopAsync(_cts.Token));
     }
 
@@ -118,20 +142,22 @@ public sealed class ActivityTracker : IActivityTracker
             if (monitors.Count == 0)
                 continue;
 
-            var now         = DateTimeOffset.UtcNow;
-            var cursorZone  = GetCursorZone(monitors, cfg, now);
-            var windowZone  = GetForegroundWindowZone(monitors);
+            var now        = DateTimeOffset.UtcNow;
+            var cursorZone = GetCursorZone(monitors, cfg, now);
+            var windowZone = GetForegroundWindowZone(monitors);
+            var engaged    = _engagementDetector.IsEngaged();
 
             var sample = new ActivitySample
             {
                 Timestamp            = now,
                 CursorZone           = cursorZone,
                 ForegroundWindowZone = windowZone,
+                IsHdtvEngaged        = engaged,
             };
 
             SampleProduced?.Invoke(this, sample);
 
-            // Check if elevated period expired; if so, next iteration will use normal interval
+            // Check if elevated period expired; next iteration uses normal interval.
             lock (_elevatedLock)
             {
                 if (_elevatedExpiry.HasValue && DateTimeOffset.UtcNow >= _elevatedExpiry.Value)
@@ -174,19 +200,17 @@ public sealed class ActivityTracker : IActivityTracker
         // MouseDwellSeconds before it's counted as a signal for that monitor.
         if (_currentCursorDevicePath != monitor.DevicePath)
         {
-            // Cursor just moved to a new monitor; record entry time
             if (!_cursorZoneEntry.ContainsKey(monitor.DevicePath))
                 _cursorZoneEntry[monitor.DevicePath] = now;
             _currentCursorDevicePath = monitor.DevicePath;
         }
 
-        var entryTime = _cursorZoneEntry.GetValueOrDefault(monitor.DevicePath, now);
+        var entryTime    = _cursorZoneEntry.GetValueOrDefault(monitor.DevicePath, now);
         var dwellElapsed = (now - entryTime).TotalSeconds;
 
         if (dwellElapsed < cfg.MouseDwellSeconds)
-            return ActivityZone.None; // dwell not yet satisfied
+            return ActivityZone.None;
 
-        // Clean up stale entries for other monitors
         foreach (var key in _cursorZoneEntry.Keys
             .Where(k => k != monitor.DevicePath).ToList())
             _cursorZoneEntry.Remove(key);

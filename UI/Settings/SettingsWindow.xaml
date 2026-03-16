@@ -103,8 +103,10 @@
 
         <!-- ── General ─────────────────────────────────────────────────── -->
         <TextBlock Text="General" FontWeight="SemiBold" Margin="0,0,0,6"/>
-        <CheckBox Content="Run on startup"  IsChecked="{Binding RunOnStartup}"      Margin="0,0,0,4"/>
-        <CheckBox Content="TV Show Mode"    IsChecked="{Binding TvShowModeEnabled}" Margin="0,0,0,12"/>
+        <CheckBox Content="Run on startup"  IsChecked="{Binding RunOnStartup}"                      Margin="0,0,0,4"/>
+        <CheckBox Content="TV Show Mode"    IsChecked="{Binding TvShowModeEnabled}"                 Margin="0,0,0,4"/>
+        <CheckBox Content="Engagement detection (DXGI frames + audio peak suppress idle revert)"
+                  IsChecked="{Binding HdtvEngagementDetectionEnabled}"                              Margin="0,0,0,12"/>
 
         <!-- ── Buttons ─────────────────────────────────────────────────── -->
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">

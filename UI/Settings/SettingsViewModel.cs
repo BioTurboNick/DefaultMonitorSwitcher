@@ -43,6 +43,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     // ── Misc ──────────────────────────────────────────────────────────────────
 
     [ObservableProperty] private bool _tvShowModeEnabled;
+    [ObservableProperty] private bool _hdtvEngagementDetectionEnabled;
     [ObservableProperty] private bool _runOnStartup;
 
     // ── Close event (raised by Save/Cancel) ───────────────────────────────────
@@ -113,6 +114,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             ElevatedPollIntervalSeconds        = ElevatedPollIntervalSeconds,
             ElevatedPollDurationSeconds        = ElevatedPollDurationSeconds,
             TvShowModeEnabled                  = TvShowModeEnabled,
+            HdtvEngagementDetectionEnabled     = HdtvEngagementDetectionEnabled,
             RunOnStartup                       = RunOnStartup,
         };
 
@@ -164,7 +166,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         PollIntervalSeconds          = cfg.PollIntervalSeconds;
         ElevatedPollIntervalSeconds  = cfg.ElevatedPollIntervalSeconds;
         ElevatedPollDurationSeconds  = cfg.ElevatedPollDurationSeconds;
-        TvShowModeEnabled            = _controller.TvShowModeEnabled;
-        RunOnStartup                 = _startup.IsRegistered;
+        TvShowModeEnabled                = _controller.TvShowModeEnabled;
+        HdtvEngagementDetectionEnabled   = cfg.HdtvEngagementDetectionEnabled;
+        RunOnStartup                     = _startup.IsRegistered;
     }
 }
