@@ -4,6 +4,8 @@
 
 - **OS**: Windows 10 version 1803 (April 2018 Update) or later
   — required for `IPolicyConfig` / `CPolicyConfigClient` (undocumented audio COM API)
+  — Windows 10 version 1903 or later recommended for SMTC media session detection (§4.4);
+    the feature degrades gracefully on earlier versions
 - **Runtime**: .NET 10
 
 ## 1. Folder / Namespace Structure
@@ -149,8 +151,9 @@ public sealed record ActivitySample
     public required ActivityZone   CursorZone           { get; init; }
     public required ActivityZone   ForegroundWindowZone { get; init; }
     /// <summary>
-    /// True if DXGI frame activity or WASAPI audio output was detected on the HDTV
-    /// this tick (see §4.4). Always false when HdtvEngagementDetectionEnabled is false.
+    /// True if DXGI frame activity, WASAPI audio output, or an SMTC media session
+    /// reporting Playing was detected this tick (see §4.4). Always false when
+    /// HdtvEngagementDetectionEnabled is false.
     /// </summary>
     public required bool           IsHdtvEngaged        { get; init; }
     /// <summary>Effective zone after precedence rules: ForegroundWindow takes priority over Cursor.</summary>
@@ -318,10 +321,11 @@ namespace DefaultMonitorSwitcher.Core;
 public interface IHdtvEngagementDetector : IDisposable
 {
     /// <summary>
-    /// Samples HDTV engagement for the current poll tick. Returns true if DXGI frame
-    /// activity or a non-zero WASAPI audio peak is detected on the HDTV endpoint.
-    /// Always returns false when HdtvEngagementDetectionEnabled is false.
-    /// Thread-safe; called from the background poll thread.
+    /// Samples HDTV engagement for the current poll tick. Returns true if any of the
+    /// following are detected: DXGI content frame activity on the HDTV output, a non-zero
+    /// WASAPI audio peak on the HDTV endpoint, or any SMTC-registered media session
+    /// reporting PlaybackStatus.Playing. Always returns false when
+    /// HdtvEngagementDetectionEnabled is false. Thread-safe; called from the background poll thread.
     /// </summary>
     bool IsEngaged();
 
@@ -832,6 +836,8 @@ namespace DefaultMonitorSwitcher.Infrastructure.Engagement;
 public sealed class HdtvEngagementDetector : IHdtvEngagementDetector
 {
     public HdtvEngagementDetector(IConfigurationService configService);
+    // Constructor fires _ = InitSmtcAsync() to obtain the SMTC session manager
+    // asynchronously; stores result under _lock when ready.
 
     public bool IsEngaged();
     public void Configure(MonitorInfo? hdtvMonitor, string? hdtvAudioDeviceId);
@@ -852,7 +858,7 @@ public sealed class HdtvEngagementDetector : IHdtvEngagementDetector
     // updated (filters cursor-only updates which leave LastPresentTime == 0).
     // Releases immediately via ReleaseFrame(). On DXGI_ERROR_ACCESS_LOST, nulls
     // _duplication for lazy recreation on the next tick. Returns false (never throws)
-    // on any failure.
+    // on any failure. DRM-protected content blocks this signal entirely.
     private void EnsureDuplication();
 
     // Audio — peak meter detection
@@ -862,6 +868,17 @@ public sealed class HdtvEngagementDetector : IHdtvEngagementDetector
     // IMMDevice.Activate(IID_IAudioMeterInformation). Calls GetPeakValue(); returns
     // true if peak > 0f. Returns false (never throws) if device not found or COM error.
     private void EnsureAudioMeter();
+
+    // SMTC — Windows Media Session detection
+    private GlobalSystemMediaTransportControlsSessionManager? _smtcManager;
+    private async Task InitSmtcAsync();
+    // Calls GlobalSystemMediaTransportControlsSessionManager.RequestAsync(); stores
+    // result under _lock. Swallows all exceptions (API requires Windows 10 1903+;
+    // absent on older versions, _smtcManager remains null and the signal is inactive).
+    private bool CheckMediaSessionActivity();
+    // Iterates _smtcManager.GetSessions() (synchronous snapshot). Returns true if
+    // any session reports PlaybackStatus.Playing. Covers Edge, Hulu, Netflix,
+    // Movies & TV, Spotify, VLC, and any other SMTC-registered app. Immune to DRM.
 }
 ```
 

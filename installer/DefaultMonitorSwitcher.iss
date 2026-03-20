@@ -1,5 +1,5 @@
 #define AppName      "DefaultMonitorSwitcher"
-#define AppVersion   "1.1.0"
+#define AppVersion   "1.2.0"
 #define AppPublisher "Nicholas"
 #define AppExeName   "DefaultMonitorSwitcher.exe"
 #define SourceDir    "..\publish"

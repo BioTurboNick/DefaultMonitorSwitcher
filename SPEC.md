@@ -86,7 +86,7 @@ selecting which one is primary (see Section 6).
 
 ### 4.4 HDTV Engagement Detection
 
-When `hdtvEngagementDetectionEnabled` is true, two supplemental signals are sampled
+When `hdtvEngagementDetectionEnabled` is true, three supplemental signals are sampled
 on each poll tick to determine whether the HDTV is actively in use beyond mere
 window presence:
 
@@ -96,13 +96,23 @@ window presence:
    field of `DXGI_OUTDUPL_FRAME_INFO` is checked to confirm desktop *content* was
    updated (non-zero), filtering out cursor-only updates which set only
    `LastMouseUpdateTime`. This signal does not apply to exclusive full-screen
-   OpenGL applications, which bypass DWM's composition pipeline.
+   OpenGL applications, which bypass DWM's composition pipeline. DRM-protected
+   content (e.g. Hulu, Movies & TV) blocks DXGI duplication entirely; the other
+   two signals cover this case.
 
 2. **WASAPI audio peak** — `IAudioMeterInformation::GetPeakValue()` is called on the
    HDTV's audio endpoint. A non-zero peak level indicates audio is actively being
    output to the HDTV. This signal is independent of rendering API.
 
-Either signal independently marks the HDTV as **engaged**. The engagement state is
+3. **Windows Media Session (SMTC)** — `GlobalSystemMediaTransportControlsSessionManager`
+   is queried via `GetSessions()` for any session whose `PlaybackStatus` is `Playing`.
+   This covers media apps that register with the Windows system media transport controls
+   (e.g. Edge, Hulu, Netflix, Movies & TV, Spotify, VLC) regardless of which display or
+   audio device they are using. This signal is immune to DRM restrictions that block DXGI
+   duplication, making it the primary guard against idle reverts during full-screen video
+   playback. Requires Windows 10 version 1903 or later; gracefully absent on older versions.
+
+Any signal independently marks the HDTV as **engaged**. The engagement state is
 evaluated inside each poll tick and factors into the idle timeout condition (§5.1).
 
 ---
@@ -378,7 +388,7 @@ application's data directory.
 | `elevatedPollIntervalSeconds` | int | 1 | Poll interval (seconds) during the elevated window after a window-move event to the HDTV |
 | `elevatedPollDurationSeconds` | int | 30 | How long elevated polling remains active after the last window-move event to the HDTV |
 | `tvShowModeEnabled` | bool | false | Suppresses automatic reverts (5.1 and 5.2) when true |
-| `hdtvEngagementDetectionEnabled` | bool | true | When true, idle detection (§5.1) uses mouse-cursor position idle (via `GetCursorPos` position tracking) supplemented by DXGI content-frame activity and WASAPI audio peak on the HDTV, rather than foreground window zone attribution. Disable to revert to the original zone-based idle detection. |
+| `hdtvEngagementDetectionEnabled` | bool | true | When true, idle detection (§5.1) uses mouse-cursor position idle (via `GetCursorPos` position tracking) supplemented by DXGI content-frame activity, WASAPI audio peak, and Windows Media Session (SMTC) playback status on the HDTV, rather than foreground window zone attribution. Disable to revert to the original zone-based idle detection. |
 | `runOnStartup` | bool | true | Register the application to run on Windows login |
 
 ---

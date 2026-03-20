@@ -1,16 +1,18 @@
 using System.Runtime.InteropServices;
 using DefaultMonitorSwitcher.Core;
 using DefaultMonitorSwitcher.Infrastructure.Audio;
+using Windows.Media.Control;
 
 namespace DefaultMonitorSwitcher.Infrastructure.Engagement;
 
 /// <summary>
-/// Detects whether the HDTV is actively in use via two supplemental signals (§4.4):
+/// Detects whether the HDTV is actively in use via three supplemental signals (§4.4):
 ///   1. DXGI Desktop Duplication — new frames being presented to the HDTV output
 ///   2. WASAPI audio peak meter  — non-zero audio output on the HDTV audio endpoint
+///   3. Windows Media Session    — any SMTC-registered app reporting PlaybackStatus.Playing
 ///
 /// Used by ActivityTracker to populate ActivitySample.IsHdtvEngaged, which the
-/// SwitchController uses to prevent idle reverts while a game is actively running.
+/// SwitchController uses to prevent idle reverts while a game or media app is active.
 /// </summary>
 public sealed class HdtvEngagementDetector : IHdtvEngagementDetector
 {
@@ -32,11 +34,16 @@ public sealed class HdtvEngagementDetector : IHdtvEngagementDetector
     private IAudioMeterInformation? _meter;
     private DateTimeOffset _meterRetryAfter = DateTimeOffset.MinValue;
 
+    // ── SMTC media session state ───────────────────────────────────────────────
+
+    private GlobalSystemMediaTransportControlsSessionManager? _smtcManager;
+
     // ── Construction ──────────────────────────────────────────────────────────
 
     public HdtvEngagementDetector(IConfigurationService configService)
     {
         _configService = configService;
+        _ = InitSmtcAsync();
     }
 
     // ── IHdtvEngagementDetector ───────────────────────────────────────────────
@@ -51,7 +58,7 @@ public sealed class HdtvEngagementDetector : IHdtvEngagementDetector
             if (_hdtvMonitor == null)
                 return false;
 
-            return CheckDxgiFrameActivity() || CheckAudioActivity();
+            return CheckDxgiFrameActivity() || CheckAudioActivity() || CheckMediaSessionActivity();
         }
     }
 
@@ -86,6 +93,34 @@ public sealed class HdtvEngagementDetector : IHdtvEngagementDetector
             ReleaseDuplication();
             _meter = null;
         }
+    }
+
+    // ── SMTC media session detection ──────────────────────────────────────────
+
+    private async Task InitSmtcAsync()
+    {
+        try
+        {
+            var mgr = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+            lock (_lock) { _smtcManager = mgr; }
+        }
+        catch { /* SMTC unavailable (requires Windows 10 1903+); signals remain inactive */ }
+    }
+
+    private bool CheckMediaSessionActivity()
+    {
+        if (_smtcManager == null) return false;
+        try
+        {
+            foreach (var session in _smtcManager.GetSessions())
+            {
+                if (session.GetPlaybackInfo()?.PlaybackStatus ==
+                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                    return true;
+            }
+        }
+        catch { }
+        return false;
     }
 
     // ── DXGI frame detection ──────────────────────────────────────────────────

@@ -22,8 +22,9 @@ public sealed record ActivitySample
     public required ActivityZone   CursorZone           { get; init; }
     public required ActivityZone   ForegroundWindowZone { get; init; }
     /// <summary>
-    /// True if DXGI frame activity or WASAPI audio output was detected on the HDTV
-    /// this tick (§4.4). Always false when HdtvEngagementDetectionEnabled is false.
+    /// True if DXGI frame activity, WASAPI audio output, or an SMTC media session
+    /// reporting Playing was detected this tick (§4.4). Always false when
+    /// HdtvEngagementDetectionEnabled is false.
     /// </summary>
     public required bool           IsHdtvEngaged        { get; init; }
     public ActivityZone EffectiveZone =>
@@ -50,8 +51,9 @@ public sealed record AppConfiguration
     public int    ElevatedPollDurationSeconds      { get; init; } = 30;
     public bool   TvShowModeEnabled                { get; init; } = false;
     /// <summary>
-    /// When true, idle detection uses GetLastInputInfo + DXGI frame activity + WASAPI
-    /// audio peak rather than foreground window zone attribution (§5.1, §4.4).
+    /// When true, idle detection uses mouse-cursor position idle + DXGI frame activity +
+    /// WASAPI audio peak + SMTC media session playback rather than foreground window zone
+    /// attribution (§5.1, §4.4).
     /// </summary>
     public bool   HdtvEngagementDetectionEnabled   { get; init; } = true;
     public bool   RunOnStartup                     { get; init; } = true;
