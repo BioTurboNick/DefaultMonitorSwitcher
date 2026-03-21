@@ -1,5 +1,5 @@
 #define AppName      "DefaultMonitorSwitcher"
-#define AppVersion   "1.2.0"
+#define AppVersion   "1.3.0"
 #define AppPublisher "Nicholas"
 #define AppExeName   "DefaultMonitorSwitcher.exe"
 #define SourceDir    "..\publish"
@@ -40,16 +40,12 @@ Source: "{#SourceDir}\{#AppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 
-[Registry]
-Root: HKCU; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\Run"; \
-  ValueType: string; ValueName: "{#AppName}"; ValueData: """{app}\{#AppExeName}"""; \
-  Tasks: startup; Flags: uninsdeletevalue
-
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Launch {#AppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "taskkill"; Parameters: "/F /IM {#AppExeName}"; Flags: runhidden; RunOnceId: "KillApp"
+Filename: "taskkill";   Parameters: "/F /IM {#AppExeName}"; Flags: runhidden; RunOnceId: "KillApp"
+Filename: "schtasks.exe"; Parameters: "/Delete /TN ""{#AppName}"" /F"; Flags: runhidden; RunOnceId: "RemoveStartupTask"
 
 [Code]
 // Check for .NET 10 Windows Desktop Runtime (x64)
@@ -92,7 +88,19 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
+  AppPath: String;
 begin
   if CurStep = ssInstall then
     Exec('taskkill', '/F /IM {#AppExeName}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  if CurStep = ssPostInstall then
+  begin
+    if WizardIsTaskSelected('startup') then
+    begin
+      AppPath := ExpandConstant('{app}\{#AppExeName}');
+      Exec('schtasks.exe',
+        '/Create /TN "{#AppName}" /TR "\"' + AppPath + '\"" /SC ONLOGON /F',
+        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    end;
+  end;
 end;

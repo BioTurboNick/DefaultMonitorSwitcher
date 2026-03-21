@@ -1,3 +1,4 @@
+using System.IO;
 using DefaultMonitorSwitcher.Core;
 using Hardcodet.Wpf.TaskbarNotification;
 using Microsoft.Toolkit.Uwp.Notifications;
@@ -85,7 +86,38 @@ public sealed class NotificationService : INotificationService
             using var key = Registry.CurrentUser.CreateSubKey(
                 $@"Software\Classes\AppUserModelId\{AppId}");
             key.SetValue("DisplayName", AppId);
+            if (GetOrCreateIconPng() is string pngPath)
+                key.SetValue("IconUri", pngPath);
         }
         catch { }
     }
+
+    /// <summary>
+    /// Returns a path to a 256×256 PNG derived from the embedded app.ico.
+    /// PNG is the correct format for AUMID IconUri — ICO causes Windows to pick
+    /// an arbitrary frame and upscale it, resulting in a blurry icon.
+    /// The PNG is written once to the app data directory and reused on subsequent runs.
+    /// </summary>
+    private static string? GetOrCreateIconPng()
+    {
+        try
+        {
+            var dir     = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DefaultMonitorSwitcher");
+            Directory.CreateDirectory(dir);
+            var pngPath = Path.Combine(dir, "app.png");
+            if (!File.Exists(pngPath))
+            {
+                var sri = System.Windows.Application.GetResourceStream(
+                    new Uri("pack://application:,,,/UI/Resources/Icons/app.ico"));
+                using var icon = new System.Drawing.Icon(sri.Stream, new System.Drawing.Size(256, 256));
+                using var bmp  = icon.ToBitmap();
+                bmp.Save(pngPath, System.Drawing.Imaging.ImageFormat.Png);
+            }
+            return pngPath;
+        }
+        catch { return null; }
+    }
+
 }
